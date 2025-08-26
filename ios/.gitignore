@@ -1,0 +1,5 @@
+# TSVB Framework - generated from ZIP during pod install
+TSVB.xcframework/
+
+# Keep the ZIP file in repo
+!TSVB.xcframework.zip
