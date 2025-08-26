@@ -15,6 +15,7 @@ export interface TsvbVideoEffectsModule {
   enableReplaceBackground(imagePath?: string | null): Promise<void>;
   disableReplaceBackground(): Promise<void>;
   isBlurEnabled(): boolean;
+  hasVirtualBackground(): boolean;
   isInitialized(): boolean;
   cleanup(): void;
 }

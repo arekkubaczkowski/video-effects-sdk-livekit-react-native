@@ -31,6 +31,9 @@ class TsvbVideoEffects {
     this.config = config;
 
     try {
+      if (Platform.OS === "android") {
+        return { success: true };
+      }
       this.initializationPromise = ExpoTsvbVideoEffectsModule.initialize(
         config.customerID
       );
@@ -121,10 +124,25 @@ class TsvbVideoEffects {
   }
 
   isBlurEnabled(): boolean {
+    if (Platform.OS === "android") {
+      // TODO: Add implementation for Android
+      return false;
+    }
     return ExpoTsvbVideoEffectsModule.isBlurEnabled();
   }
 
+  isVirtualBackgroundEnabled() {
+    if (Platform.OS === "android") {
+      // TODO: Add implementation for Android
+      return false;
+    }
+    return ExpoTsvbVideoEffectsModule.hasVirtualBackground();
+  }
+
   isInitialized(): boolean {
+    if (Platform.OS === "android") {
+      return true;
+    }
     return ExpoTsvbVideoEffectsModule.isInitialized();
   }
 
