@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "video-effects-sdk-react-native": ["../src/index"],
+      "video-effects-sdk-react-native/*": ["../src/*"]
+    }
+  }
+}

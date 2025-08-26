@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["VideoEffectsSdkReactNativeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.videoeffectssdkreactnative.VideoEffectsSdkReactNativeModule"]
+  }
+}
