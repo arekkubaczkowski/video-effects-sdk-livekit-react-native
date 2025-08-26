@@ -1,4 +1,4 @@
-import { MediaStreamTrack } from '@livekit/react-native-webrtc';
+import { MediaStreamTrack } from "@livekit/react-native-webrtc";
 
 export interface InitializationResult {
   success: boolean;
@@ -6,7 +6,7 @@ export interface InitializationResult {
   error?: string;
 }
 
-export type PipelineMode = 'NONE' | 'NO_EFFECT' | 'BLUR' | 'REPLACE';
+export type PipelineMode = "NONE" | "NO_EFFECT" | "BLUR" | "REPLACE";
 
 export interface TsvbVideoEffectsModule {
   initialize(customerID: string): Promise<InitializationResult>;

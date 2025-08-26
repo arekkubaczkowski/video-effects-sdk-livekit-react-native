@@ -28,11 +28,11 @@
   "author": "Arkadiusz Kubaczkowski <arek.kubaczkowski@gmail.com> (arekkubaczkowski)",
   "license": "MIT",
   "homepage": "https://github.com/arekkubaczkowski/video-effects-sdk-react-native#readme",
-  "dependencies": {},
   "devDependencies": {
+    "@livekit/react-native-webrtc": "github:arekkubaczkowski/react-native-webrtc#feat/effects-sdk-integration",
     "@types/react": "~19.0.0",
-    "expo-module-scripts": "^4.1.10",
     "expo": "~53.0.0",
+    "expo-module-scripts": "^4.1.10",
     "react-native": "0.79.1"
   },
   "peerDependencies": {
