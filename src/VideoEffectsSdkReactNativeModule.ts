@@ -24,7 +24,7 @@ class TsvbVideoEffects {
       return this.initializationPromise;
     }
 
-    if (this.isInitialized()) {
+    if (Platform.OS === "ios" && this.isInitialized()) {
       return { success: true };
     }
 
