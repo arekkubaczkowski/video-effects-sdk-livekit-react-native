@@ -1,5 +1,5 @@
 import { InitializationResult, TsvbVideoEffectsConfig, TsvbVideoEffectsModule } from "./ExpoTsvbVideoEffects.types";
-declare const ExpoTsvbVideoEffectsModule: TsvbVideoEffectsModule;
+declare const VideoEffectsSdkReactNativeModule: TsvbVideoEffectsModule;
 declare class TsvbVideoEffects {
     private config;
     private initializationPromise;
@@ -18,5 +18,5 @@ declare class TsvbVideoEffects {
 export declare const tsvbVideoEffects: TsvbVideoEffects;
 export * from "./ExpoTsvbVideoEffects.types";
 export { TsvbVideoEffects };
-export { ExpoTsvbVideoEffectsModule };
+export { VideoEffectsSdkReactNativeModule };
 //# sourceMappingURL=ExpoTsvbVideoEffects.d.ts.map

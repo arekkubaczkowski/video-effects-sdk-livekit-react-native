@@ -7,7 +7,7 @@ import {
   TsvbVideoEffectsModule,
 } from "./ExpoTsvbVideoEffects.types";
 
-const ExpoTsvbVideoEffectsModule = (
+const VideoEffectsSdkReactNativeModule = (
   Platform.OS === "android" ? {} : requireNativeModule("ExpoTsvbVideoEffects")
 ) as TsvbVideoEffectsModule;
 
@@ -38,7 +38,7 @@ class TsvbVideoEffects {
           );
         return { success: true, status };
       }
-      this.initializationPromise = ExpoTsvbVideoEffectsModule.initialize(
+      this.initializationPromise = VideoEffectsSdkReactNativeModule.initialize(
         config.customerID
       );
       const result = await this.initializationPromise;
@@ -72,7 +72,7 @@ class TsvbVideoEffects {
           "PipelineMode.blur"
         );
       } else {
-        await ExpoTsvbVideoEffectsModule.enableBlurBackground(blurPower);
+        await VideoEffectsSdkReactNativeModule.enableBlurBackground(blurPower);
       }
     } catch (error) {
       throw new Error(`Failed to enable blur: ${error}`);
@@ -88,7 +88,7 @@ class TsvbVideoEffects {
           "PipelineMode.none"
         );
       } else {
-        await ExpoTsvbVideoEffectsModule.disableBlurBackground();
+        await VideoEffectsSdkReactNativeModule.disableBlurBackground();
       }
     } catch (error) {
       throw new Error(`Failed to disable blur: ${error}`);
@@ -104,7 +104,7 @@ class TsvbVideoEffects {
           "PipelineMode.replace"
         );
       } else {
-        ExpoTsvbVideoEffectsModule.enableReplaceBackground(imagePath);
+        VideoEffectsSdkReactNativeModule.enableReplaceBackground(imagePath);
       }
     } catch (error) {
       throw new Error(`Failed to enable background replacement: ${error}`);
@@ -120,7 +120,7 @@ class TsvbVideoEffects {
           "PipelineMode.none"
         );
       } else {
-        await ExpoTsvbVideoEffectsModule.disableReplaceBackground();
+        await VideoEffectsSdkReactNativeModule.disableReplaceBackground();
       }
     } catch (error) {
       throw new Error(`Failed to disable background replacement: ${error}`);
@@ -132,7 +132,7 @@ class TsvbVideoEffects {
       // TODO: Add implementation for Android
       return false;
     }
-    return ExpoTsvbVideoEffectsModule.isBlurEnabled();
+    return VideoEffectsSdkReactNativeModule.isBlurEnabled();
   }
 
   isVirtualBackgroundEnabled() {
@@ -140,18 +140,18 @@ class TsvbVideoEffects {
       // TODO: Add implementation for Android
       return false;
     }
-    return ExpoTsvbVideoEffectsModule.hasVirtualBackground();
+    return VideoEffectsSdkReactNativeModule.hasVirtualBackground();
   }
 
   isInitialized(): boolean {
     if (Platform.OS === "android") {
       return true;
     }
-    return ExpoTsvbVideoEffectsModule.isInitialized();
+    return VideoEffectsSdkReactNativeModule.isInitialized();
   }
 
   cleanup(): void {
-    ExpoTsvbVideoEffectsModule.cleanup();
+    VideoEffectsSdkReactNativeModule.cleanup();
     this.config = null;
     this.initializationPromise = null;
   }
@@ -171,4 +171,4 @@ export const tsvbVideoEffects = new TsvbVideoEffects();
 
 export * from "./ExpoTsvbVideoEffects.types";
 export { TsvbVideoEffects };
-export { ExpoTsvbVideoEffectsModule };
+export { VideoEffectsSdkReactNativeModule };

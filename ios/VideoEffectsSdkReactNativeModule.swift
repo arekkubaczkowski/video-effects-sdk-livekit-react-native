@@ -22,11 +22,11 @@ func synchronized<ReturnT>(_ obj: AnyObject, closure: () -> ReturnT) -> ReturnT 
 
 // MARK: - Main Module
 
-public class ExpoTsvbVideoEffectsModule: Module, TsvbVideoEffectsModuleProtocol {
+public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModuleProtocol {
     
     // MARK: - Singleton
     
-    private static var _sharedInstance: ExpoTsvbVideoEffectsModule?
+    private static var _sharedInstance: VideoEffectsSdkReactNativeModule?
     
     @objc public static func sharedInstance() -> Any? {
         return _sharedInstance
@@ -58,7 +58,7 @@ public class ExpoTsvbVideoEffectsModule: Module, TsvbVideoEffectsModuleProtocol 
         Name("ExpoTsvbVideoEffects")
         
         OnCreate {
-            ExpoTsvbVideoEffectsModule._sharedInstance = self
+            VideoEffectsSdkReactNativeModule._sharedInstance = self
         }
         
         AsyncFunction("initialize") { (customerID: String) -> [String: Any] in
