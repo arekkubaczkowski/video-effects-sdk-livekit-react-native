@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name           = 'ExpoTsvbVideoEffects'
+  s.name           = 'VideoEffectsSdkReactNative'
   s.version        = '1.0.0'
   s.summary        = 'React Native wrapper for TSVB Video Effects SDK'
   s.description    = 'Expo module that provides background blur functionality using TSVB Video Effects SDK'

@@ -1,3 +1,3 @@
-export * from './ExpoTsvbVideoEffects';
-export * from './ExpoTsvbVideoEffects.types';
+export * from "./VideoEffectsSdkReactNativeModule";
+export * from "./VideoEffectsSdkReactNativeModule.types";
 //# sourceMappingURL=index.d.ts.map

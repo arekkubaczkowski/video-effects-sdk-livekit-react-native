@@ -5,7 +5,7 @@ import {
   InitializationResult,
   TsvbVideoEffectsConfig,
   TsvbVideoEffectsModule,
-} from "./ExpoTsvbVideoEffects.types";
+} from "./VideoEffectsSdkReactNativeModule.types";
 
 const VideoEffectsSdkReactNativeModule = (
   Platform.OS === "android" ? {} : requireNativeModule("ExpoTsvbVideoEffects")
@@ -169,6 +169,6 @@ class TsvbVideoEffects {
 
 export const tsvbVideoEffects = new TsvbVideoEffects();
 
-export * from "./ExpoTsvbVideoEffects.types";
+export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
 export { VideoEffectsSdkReactNativeModule };
