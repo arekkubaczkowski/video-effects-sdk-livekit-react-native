@@ -15,7 +15,8 @@ class TsvbVideoEffects {
         this.config = config;
         try {
             if (Platform.OS === "android") {
-                return { success: true };
+                const status = await this.config?.mediaStreamTrack?.initializeEffectsSDK(this.config.customerID);
+                return { success: true, status };
             }
             this.initializationPromise = ExpoTsvbVideoEffectsModule.initialize(config.customerID);
             const result = await this.initializationPromise;
