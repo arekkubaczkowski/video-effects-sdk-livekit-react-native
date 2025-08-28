@@ -85,7 +85,7 @@ class TsvbVideoEffects {
     try {
       if (Platform.OS === "android") {
         this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode(
-          "PipelineMode.none"
+          "PipelineMode.no_effect"
         );
       } else {
         await VideoEffectsSdkReactNativeModule.disableBlurBackground();
