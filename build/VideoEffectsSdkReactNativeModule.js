@@ -80,7 +80,7 @@ class TsvbVideoEffects {
         this.ensureInitialized();
         try {
             if (Platform.OS === "android") {
-                this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode("PipelineMode.none");
+                this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode("PipelineMode.no_effect");
             }
             else {
                 await VideoEffectsSdkReactNativeModule.disableReplaceBackground();
