@@ -27,6 +27,6 @@ export interface TsvbVideoEffectsConfig {
     customerID: string;
     defaultBlurPower?: number;
     trackId: string;
-    mediaStreamTrack?: MediaStreamTrack;
+    mediaStreamTrack: MediaStreamTrack;
 }
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.types.d.ts.map
