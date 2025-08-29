@@ -22,14 +22,6 @@ class TsvbVideoEffects {
   async initialize(
     config: TsvbVideoEffectsConfig
   ): Promise<InitializationResult> {
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-
-    if (Platform.OS === "ios" && this.isInitialized()) {
-      return { success: true };
-    }
-
     this.config = config;
 
     try {
@@ -41,7 +33,8 @@ class TsvbVideoEffects {
         return { success: true, status };
       }
       this.initializationPromise = VideoEffectsSdkReactNativeModule.initialize(
-        config.customerID
+        config.customerID,
+        config.mediaStreamTrack.id
       );
       const result = await this.initializationPromise;
 
@@ -49,10 +42,9 @@ class TsvbVideoEffects {
         throw new Error(result.error || "Initialization failed");
       }
 
-      // After successful initialization, set video effects on the track
       if (Platform.OS === "ios" && WebRTCModule) {
         await WebRTCModule.mediaStreamTrackSetVideoEffects(
-          this.config.trackId,
+          config.mediaStreamTrack.id,
           ["tsvb"]
         );
       }
@@ -106,7 +98,9 @@ class TsvbVideoEffects {
           "PipelineMode.replace"
         );
       } else {
-        VideoEffectsSdkReactNativeModule.enableReplaceBackground(imagePath);
+        await VideoEffectsSdkReactNativeModule.enableReplaceBackground(
+          imagePath
+        );
       }
     } catch (error) {
       throw new Error(`Failed to enable background replacement: ${error}`);
@@ -173,4 +167,4 @@ export const tsvbVideoEffects = new TsvbVideoEffects();
 
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsSdkReactNativeModule };
+export { VideoEffectsSdkReactNativeModule as VideoEffectsSdkReactNativeModule };

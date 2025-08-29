@@ -9,7 +9,10 @@ export interface InitializationResult {
 export type PipelineMode = "NONE" | "NO_EFFECT" | "BLUR" | "REPLACE";
 
 export interface VideoEffectsSdkReactNativeModule {
-  initialize(customerID: string): Promise<InitializationResult>;
+  initialize(
+    customerID: string,
+    trackId: string
+  ): Promise<InitializationResult>;
   enableBlurBackground(power?: number): Promise<void>;
   disableBlurBackground(): Promise<void>;
   enableReplaceBackground(imagePath?: string | null): Promise<void>;
@@ -31,6 +34,5 @@ export interface CaptureControllerResult {
 export interface TsvbVideoEffectsConfig {
   customerID: string;
   defaultBlurPower?: number;
-  trackId: string;
   mediaStreamTrack: MediaStreamTrack;
 }

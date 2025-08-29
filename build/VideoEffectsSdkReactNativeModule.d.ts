@@ -18,5 +18,5 @@ declare class TsvbVideoEffects {
 export declare const tsvbVideoEffects: TsvbVideoEffects;
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsSdkReactNativeModule };
+export { VideoEffectsSdkReactNativeModule as VideoEffectsSdkReactNativeModule };
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.d.ts.map

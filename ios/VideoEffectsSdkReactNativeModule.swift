@@ -47,6 +47,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     private var blurEnabled = false
     private var replaceBackgroundEnabled = false
     private var pipelineReady = false
+    private var currentTrackId: String?
     
     // Concurrency
     private let pipelineControlQueue = DispatchQueue(label: "com.tsvb.pipeline-control")
@@ -60,8 +61,8 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
             VideoEffectsSdkReactNativeModule._sharedInstance = self
         }
         
-        AsyncFunction("initialize") { (customerID: String) -> [String: Any] in
-            return await self.initializeSDK(customerID: customerID)
+        AsyncFunction("initialize") { (customerID: String, trackId: String) -> [String: Any] in
+            return await self.initializeSDK(customerID: customerID, trackId: trackId)
         }
         
         AsyncFunction("enableBlurBackground") { (power: Double?) -> [String: Any] in
@@ -107,7 +108,23 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     
     // MARK: - SDK Operations
     
-    private func initializeSDK(customerID: String) async -> [String: Any] {
+    private func initializeSDK(customerID: String, trackId: String) async -> [String: Any] {
+        // Check if track ID has changed
+        let trackIdChanged = currentTrackId != nil && currentTrackId != trackId
+        
+        if trackIdChanged {
+            currentTrackId = trackId
+            registerVideoProcessor()
+            
+            return ["success": true, "status": "track_updated"]
+        }
+        
+        // If already initialized with same track, just return success
+        if isInitialized && currentTrackId == trackId {
+            return ["success": true, "status": "already_initialized"]
+        }
+        
+        // First-time initialization
         do {
             sdkFactory = TSVB.SDKFactory()
             
@@ -129,8 +146,8 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
                 
                 isInitialized = true
                 pipelineReady = true
+                currentTrackId = trackId
                 
-                // Register video processor with WebRTC - this will persist across camera restarts
                 registerVideoProcessor()
                 
                 return ["success": true, "status": "active"]
@@ -258,16 +275,12 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     // MARK: - Video Processor Management
     
     private func registerVideoProcessor() {
-        // Create wrapper if it doesn't exist
-        if videoFrameProcessor == nil {
-            videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
-        }
-        // Register the global singleton processor (idempotent operation)
+        unregisterVideoProcessor() // Clean up any existing processor first
+        videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
         videoFrameProcessor?.register()
     }
     
     private func unregisterVideoProcessor() {
-        // Unregister via wrapper which delegates to global singleton
         videoFrameProcessor?.unregister()
         videoFrameProcessor = nil
     }
@@ -293,6 +306,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
         blurEnabled = false
         replaceBackgroundEnabled = false
         pipelineReady = false
+        currentTrackId = nil
     }
     
     deinit {

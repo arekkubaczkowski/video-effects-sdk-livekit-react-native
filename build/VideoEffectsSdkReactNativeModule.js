@@ -8,26 +8,19 @@ class TsvbVideoEffects {
     config = null;
     initializationPromise = null;
     async initialize(config) {
-        if (this.initializationPromise) {
-            return this.initializationPromise;
-        }
-        if (Platform.OS === "ios" && this.isInitialized()) {
-            return { success: true };
-        }
         this.config = config;
         try {
             if (Platform.OS === "android") {
                 const status = await this.config?.mediaStreamTrack?.initializeEffectsSDK(this.config.customerID);
                 return { success: true, status };
             }
-            this.initializationPromise = VideoEffectsSdkReactNativeModule.initialize(config.customerID);
+            this.initializationPromise = VideoEffectsSdkReactNativeModule.initialize(config.customerID, config.mediaStreamTrack.id);
             const result = await this.initializationPromise;
             if (!result.success) {
                 throw new Error(result.error || "Initialization failed");
             }
-            // After successful initialization, set video effects on the track
             if (Platform.OS === "ios" && WebRTCModule) {
-                await WebRTCModule.mediaStreamTrackSetVideoEffects(this.config.trackId, ["tsvb"]);
+                await WebRTCModule.mediaStreamTrackSetVideoEffects(config.mediaStreamTrack.id, ["tsvb"]);
             }
             return result;
         }
@@ -71,7 +64,7 @@ class TsvbVideoEffects {
                 this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode("PipelineMode.replace");
             }
             else {
-                VideoEffectsSdkReactNativeModule.enableReplaceBackground(imagePath);
+                await VideoEffectsSdkReactNativeModule.enableReplaceBackground(imagePath);
             }
         }
         catch (error) {
@@ -129,5 +122,5 @@ class TsvbVideoEffects {
 export const tsvbVideoEffects = new TsvbVideoEffects();
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsSdkReactNativeModule };
+export { VideoEffectsSdkReactNativeModule as VideoEffectsSdkReactNativeModule };
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.js.map
