@@ -9,12 +9,12 @@ public class TsvbVideoFrameProcessor: NSObject {
     
     // MARK: - Properties
     
-    private weak var tsvbModule: VideoEffectsSdkReactNativeModule?
+    private weak var tsvbModule: TsvbVideoEffectsModuleProtocol?
     private var isEnabled: Bool = true
     
     // MARK: - Initialization
     
-    @objc public init(module: VideoEffectsSdkReactNativeModule) {
+    @objc public init(module: TsvbVideoEffectsModuleProtocol) {
         self.tsvbModule = module
         super.init()
     }
