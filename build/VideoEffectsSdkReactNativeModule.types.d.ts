@@ -5,7 +5,7 @@ export interface InitializationResult {
     error?: string;
 }
 export type PipelineMode = "NONE" | "NO_EFFECT" | "BLUR" | "REPLACE";
-export interface TsvbVideoEffectsModule {
+export interface VideoEffectsSdkReactNativeModule {
     initialize(customerID: string): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
     disableBlurBackground(): Promise<void>;

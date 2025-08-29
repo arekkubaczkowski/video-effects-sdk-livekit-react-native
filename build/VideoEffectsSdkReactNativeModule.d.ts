@@ -1,5 +1,5 @@
-import { InitializationResult, TsvbVideoEffectsConfig, TsvbVideoEffectsModule } from "./VideoEffectsSdkReactNativeModule.types";
-declare const VideoEffectsSdkReactNativeModule: TsvbVideoEffectsModule;
+import { InitializationResult, TsvbVideoEffectsConfig, VideoEffectsSdkReactNativeModule } from "./VideoEffectsSdkReactNativeModule.types";
+declare const VideoEffectsSdkReactNativeModule: VideoEffectsSdkReactNativeModule;
 declare class TsvbVideoEffects {
     private config;
     private initializationPromise;

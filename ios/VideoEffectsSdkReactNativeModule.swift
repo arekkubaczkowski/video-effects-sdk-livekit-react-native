@@ -55,7 +55,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     // MARK: - Expo Module Definition
     
     public func definition() -> ModuleDefinition {
-        Name("ExpoTsvbVideoEffects")
+        Name("VideoEffectsSdkReactNativeModule")
         
         OnCreate {
             VideoEffectsSdkReactNativeModule._sharedInstance = self

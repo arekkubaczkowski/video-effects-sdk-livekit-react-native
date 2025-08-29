@@ -4,12 +4,14 @@ import { requireNativeModule } from "expo-modules-core";
 import {
   InitializationResult,
   TsvbVideoEffectsConfig,
-  TsvbVideoEffectsModule,
+  VideoEffectsSdkReactNativeModule,
 } from "./VideoEffectsSdkReactNativeModule.types";
 
 const VideoEffectsSdkReactNativeModule = (
-  Platform.OS === "android" ? {} : requireNativeModule("ExpoTsvbVideoEffects")
-) as TsvbVideoEffectsModule;
+  Platform.OS === "android"
+    ? {}
+    : requireNativeModule("VideoEffectsSdkReactNativeModule")
+) as VideoEffectsSdkReactNativeModule;
 
 const { WebRTCModule } = NativeModules;
 

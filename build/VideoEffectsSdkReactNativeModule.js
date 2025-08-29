@@ -1,6 +1,8 @@
 import { NativeModules, Platform } from "react-native";
 import { requireNativeModule } from "expo-modules-core";
-const VideoEffectsSdkReactNativeModule = (Platform.OS === "android" ? {} : requireNativeModule("ExpoTsvbVideoEffects"));
+const VideoEffectsSdkReactNativeModule = (Platform.OS === "android"
+    ? {}
+    : requireNativeModule("VideoEffectsSdkReactNativeModule"));
 const { WebRTCModule } = NativeModules;
 class TsvbVideoEffects {
     config = null;

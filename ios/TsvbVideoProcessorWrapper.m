@@ -47,7 +47,7 @@
 // MARK: - Private Methods
 
 - (id)createSwiftProcessor:(id<TsvbVideoEffectsModuleProtocol>)tsvbModule {
-    Class processorClass = NSClassFromString(@"ExpoTsvbVideoEffects.TsvbVideoProcessor");
+    Class processorClass = NSClassFromString(@"VideoEffectsSdkReactNativeModule.TsvbVideoProcessor");
     if (processorClass) {
         SEL initSelector = NSSelectorFromString(@"initWithTsvbModule:");
         
