@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.swift_version = '5.4'
 
   # Include Swift and Objective-C sources
-  s.source_files = "*.swift", "*.m", "*.h"
+  s.source_files = "*.swift", "*.h"
   
   # Module configuration
   s.pod_target_xcconfig = {

@@ -40,8 +40,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     private var frameFactory: FrameFactory?
     
     // Video processing
-    private var videoProcessor: TsvbVideoProcessor?
-    private var processorWrapper: NSObject?
+    private var videoFrameProcessor: TsvbVideoFrameProcessor?
     
     // State management
     private var isInitialized = false
@@ -259,38 +258,13 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     // MARK: - Video Processor Management
     
     private func registerVideoProcessor() {
-        videoProcessor = TsvbVideoProcessor(tsvbModule: self)
-        
-        guard let bridgeClass = NSClassFromString("TsvbProcessorBridge") else {
-            return
-        }
-        
-        // Call TsvbProcessorBridge.registerProcessorWithModule(self)
-        if let method = class_getClassMethod(bridgeClass, NSSelectorFromString("registerProcessorWithModule:")) {
-            let imp = method_getImplementation(method)
-            typealias Function = @convention(c) (AnyClass, Selector, AnyObject) -> Void
-            let function = unsafeBitCast(imp, to: Function.self)
-            function(bridgeClass, NSSelectorFromString("registerProcessorWithModule:"), self)
-        }
+        videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
+        videoFrameProcessor?.register()
     }
     
     private func unregisterVideoProcessor() {
-        defer {
-            processorWrapper = nil
-            videoProcessor = nil
-        }
-        
-        guard let bridgeClass = NSClassFromString("TsvbProcessorBridge") else {
-            return
-        }
-        
-        // Call TsvbProcessorBridge.unregisterProcessor()
-        if let method = class_getClassMethod(bridgeClass, NSSelectorFromString("unregisterProcessor")) {
-            let imp = method_getImplementation(method)
-            typealias Function = @convention(c) (AnyClass, Selector) -> Void
-            let function = unsafeBitCast(imp, to: Function.self)
-            function(bridgeClass, NSSelectorFromString("unregisterProcessor"))
-        }
+        videoFrameProcessor?.unregister()
+        videoFrameProcessor = nil
     }
     
     // MARK: - Lifecycle Management
