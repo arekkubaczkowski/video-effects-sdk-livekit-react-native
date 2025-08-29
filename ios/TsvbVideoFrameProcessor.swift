@@ -14,8 +14,8 @@ public class TsvbVideoFrameProcessor: NSObject {
     
     // MARK: - Initialization
     
-    @objc public init(module: TsvbVideoEffectsModuleProtocol) {
-        self.tsvbModule = module
+    @objc public init(module: Any) {
+        self.tsvbModule = module as? TsvbVideoEffectsModuleProtocol
         super.init()
     }
     

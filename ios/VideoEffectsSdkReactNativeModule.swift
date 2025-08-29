@@ -6,7 +6,7 @@ import ObjectiveC
 
 // MARK: - Protocols
 
-@objc public protocol TsvbVideoEffectsModuleProtocol: NSObjectProtocol {
+@objc public protocol TsvbVideoEffectsModuleProtocol: AnyObject {
     @objc(processFrameInternal:) func processFrameInternal(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
     @objc var isBlurEnabled: Bool { get }
     @objc var hasVirtualBackground: Bool { get }
