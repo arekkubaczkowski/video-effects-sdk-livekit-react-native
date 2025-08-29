@@ -130,7 +130,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
                 isInitialized = true
                 pipelineReady = true
                 
-                // Register video processor with WebRTC
+                // Register video processor with WebRTC - this will persist across camera restarts
                 registerVideoProcessor()
                 
                 return ["success": true, "status": "active"]
@@ -258,11 +258,16 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     // MARK: - Video Processor Management
     
     private func registerVideoProcessor() {
-        videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
+        // Create wrapper if it doesn't exist
+        if videoFrameProcessor == nil {
+            videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
+        }
+        // Register the global singleton processor (idempotent operation)
         videoFrameProcessor?.register()
     }
     
     private func unregisterVideoProcessor() {
+        // Unregister via wrapper which delegates to global singleton
         videoFrameProcessor?.unregister()
         videoFrameProcessor = nil
     }
