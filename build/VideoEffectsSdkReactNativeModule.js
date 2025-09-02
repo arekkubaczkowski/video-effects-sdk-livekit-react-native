@@ -34,6 +34,7 @@ class TsvbVideoEffects {
             const blurPower = power ?? this.config?.defaultBlurPower ?? 0.3;
             if (Platform.OS === "android") {
                 this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode("PipelineMode.blur");
+                this.config?.mediaStreamTrack?.setEffectsSdkBlurPower(blurPower);
             }
             else {
                 await VideoEffectsSdkReactNativeModule.enableBlurBackground(blurPower);
