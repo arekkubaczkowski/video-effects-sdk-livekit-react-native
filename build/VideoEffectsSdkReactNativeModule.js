@@ -6,7 +6,6 @@ const VideoEffectsSdkReactNativeModule = (Platform.OS === "android"
 const { WebRTCModule } = NativeModules;
 class TsvbVideoEffects {
     config = null;
-    initializationPromise = null;
     async initialize(config) {
         this.config = config;
         try {
@@ -14,8 +13,7 @@ class TsvbVideoEffects {
                 const status = await this.config?.mediaStreamTrack?.initializeEffectsSDK(this.config.customerID);
                 return { success: true, status };
             }
-            this.initializationPromise = VideoEffectsSdkReactNativeModule.initialize(config.customerID, config.mediaStreamTrack.id);
-            const result = await this.initializationPromise;
+            const result = await VideoEffectsSdkReactNativeModule.initialize(config.customerID, config.mediaStreamTrack.id);
             if (!result.success) {
                 throw new Error(result.error || "Initialization failed");
             }
@@ -100,16 +98,15 @@ class TsvbVideoEffects {
         }
         return VideoEffectsSdkReactNativeModule.hasVirtualBackground();
     }
-    isInitialized() {
+    async isInitialized() {
         if (Platform.OS === "android") {
-            return true;
+            return (await this.config?.mediaStreamTrack?.isInitialized()) || false;
         }
         return VideoEffectsSdkReactNativeModule.isInitialized();
     }
     cleanup() {
         VideoEffectsSdkReactNativeModule.cleanup();
         this.config = null;
-        this.initializationPromise = null;
     }
     getConfig() {
         return this.config;

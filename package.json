@@ -30,7 +30,7 @@
   "license": "MIT",
   "homepage": "https://github.com/arekkubaczkowski/video-effects-sdk-react-native#readme",
   "devDependencies": {
-    "@livekit/react-native-webrtc": "github:arekkubaczkowski/react-native-webrtc#feat/effects-sdk-integration",
+    "@livekit/react-native-webrtc": "github:arekkubaczkowski/react-native-webrtc#b39ca95f185270d60b0064a8a376bf93f146cbb3",
     "@types/react": "~19.0.0",
     "expo": "~53.0.0",
     "expo-module-scripts": "^4.1.10",

@@ -2,7 +2,6 @@ import { InitializationResult, TsvbVideoEffectsConfig, VideoEffectsSdkReactNativ
 declare const VideoEffectsSdkReactNativeModule: VideoEffectsSdkReactNativeModule;
 declare class TsvbVideoEffects {
     private config;
-    private initializationPromise;
     initialize(config: TsvbVideoEffectsConfig): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
     disableBlurBackground(): Promise<void>;
@@ -10,7 +9,7 @@ declare class TsvbVideoEffects {
     disableReplaceBackground(): Promise<void>;
     isBlurEnabled(): boolean;
     isVirtualBackgroundEnabled(): boolean;
-    isInitialized(): boolean;
+    isInitialized(): Promise<boolean>;
     cleanup(): void;
     getConfig(): TsvbVideoEffectsConfig | null;
     private ensureInitialized;
