@@ -1,8 +1,10 @@
 import ExpoModulesCore
 import AVFoundation
 import WebRTC
+import UIKit
 @preconcurrency import TSVB
 import ObjectiveC
+
 
 // MARK: - Protocols
 
@@ -49,6 +51,8 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
     private var pipelineReady = false
     private var currentTrackId: String?
     
+    private var replacementController: (any ReplacementController)?
+    
     // Concurrency
     private let pipelineControlQueue = DispatchQueue(label: "com.tsvb.pipeline-control")
     
@@ -74,8 +78,11 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
             return await self.disableBlurBackground()
         }
         
-        AsyncFunction("enableReplaceBackground") { (imagePath: String?) -> [String: Any] in
-            return await self.enableReplaceBackground(imagePath: imagePath)
+        AsyncFunction("enableReplaceBackground") { (assetSource: [String: Any]?, promise: Promise) in
+            Task {
+                let result = await self.enableReplaceBackground(assetSource: assetSource)
+                promise.resolve(result)
+            }
         }
         
         AsyncFunction("disableReplaceBackground") { () -> [String: Any] in
@@ -206,14 +213,73 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
         }
     }
     
-    private func enableReplaceBackground(imagePath: String?) async -> [String: Any] {
+    private func enableReplaceBackground(assetSource: [String: Any]?) async -> [String: Any] {
         guard isInitialized, let pipeline = pipeline else {
             return ["success": false, "error": "SDK not initialized"]
         }
         
-        return await inControlQueue {
+        
+        // Load image first (outside of synchronized block)
+        var backgroundImage: UIImage? = nil
+        
+        if let source = assetSource {
+            if let uri = source["uri"] as? String {
+                if uri.hasPrefix("http://") || uri.hasPrefix("https://") {
+                    if let url = URL(string: uri) {
+                        do {
+                            let (data, _) = try await URLSession.shared.data(from: url)
+                            if let image = UIImage(data: data) {
+                                backgroundImage = image
+                            }
+                        } catch {
+                            return ["success": false, "error": "Failed to download image: \(error.localizedDescription)"]
+                        }
+                    }
+                }
+                else if uri.hasPrefix("file://") {
+                    let path = String(uri.dropFirst(7)) // Remove "file://" prefix
+                    if let image = UIImage(contentsOfFile: path) {
+                        backgroundImage = image
+                    }
+                }
+                else {
+                    let filename = (uri as NSString).lastPathComponent
+                    let nameWithoutExt = (filename as NSString).deletingPathExtension
+                    if let image = UIImage(named: nameWithoutExt) {
+                        backgroundImage = image
+                    }
+                }
+                
+                if backgroundImage == nil {
+                    return ["success": false, "error": "Failed to load background image from URI: \(uri)"]
+                }
+            } else {
+                return ["success": false, "error": "Asset source missing 'uri' property"]
+            }
+        }
+        
+        return await inControlQueue { () -> [String: Any] in
             return synchronized(pipeline) {
-                let result = pipeline.enableReplaceBackground(nil)
+                
+                var controller: (any ReplacementController)? = nil
+                let result = pipeline.enableReplaceBackground(&controller)
+                
+                if result == .ok, let replacementController = controller {
+                    self.replacementController = replacementController
+                    
+                    if let image = backgroundImage,
+                       let frameFactory = self.frameFactory {
+                        
+                        if let imageData = image.jpegData(compressionQuality: 0.9),
+                           let tsvbFrame = frameFactory.image(with: imageData) {
+                            
+                            replacementController.background = tsvbFrame
+                        } else if let imageData = image.pngData(),
+                            let tsvbFrame = frameFactory.image(with: imageData) {
+                            replacementController.background = tsvbFrame
+                        }
+                    }
+                }
                 
                 if result == .ok {
                     pipeline.disableBlurBackground()
@@ -234,10 +300,12 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
             return ["success": false, "error": "SDK not initialized"]
         }
         
-        return await inControlQueue {
+        
+        return await inControlQueue { () -> [String: Any] in
             return synchronized(pipeline) {
                 pipeline.disableReplaceBackground()
                 self.replaceBackgroundEnabled = false
+                self.replacementController = nil
                 
                 return ["success": true]
             }
@@ -249,7 +317,10 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
             return pixelBuffer
         }
         
-        guard CVPixelBufferGetWidth(pixelBuffer) > 0 && CVPixelBufferGetHeight(pixelBuffer) > 0 else {
+        let frameWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let frameHeight = CVPixelBufferGetHeight(pixelBuffer)
+        
+        guard frameWidth > 0 && frameHeight > 0 else {
             return pixelBuffer
         }
         
@@ -315,6 +386,7 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
         replaceBackgroundEnabled = false
         pipelineReady = false
         currentTrackId = nil
+        replacementController = nil
     }
     
     deinit {
