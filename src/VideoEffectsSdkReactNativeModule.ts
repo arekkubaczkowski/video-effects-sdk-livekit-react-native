@@ -1,4 +1,8 @@
-import { NativeModules, Platform } from "react-native";
+import {
+  ImageResolvedAssetSource,
+  NativeModules,
+  Platform,
+} from "react-native";
 import { requireNativeModule } from "expo-modules-core";
 
 import {
@@ -88,7 +92,7 @@ class TsvbVideoEffects {
     }
   }
 
-  async enableReplaceBackground(imagePath?: string | null) {
+  async enableReplaceBackground(imagePath?: ImageResolvedAssetSource | null) {
     this.ensureInitialized();
 
     try {

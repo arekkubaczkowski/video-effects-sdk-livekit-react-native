@@ -1,4 +1,5 @@
 import { MediaStreamTrack } from "@livekit/react-native-webrtc";
+import { ImageResolvedAssetSource } from "react-native";
 export interface InitializationResult {
     success: boolean;
     status?: string;
@@ -9,7 +10,7 @@ export interface VideoEffectsSdkReactNativeModule {
     initialize(customerID: string, trackId: string): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
     disableBlurBackground(): Promise<void>;
-    enableReplaceBackground(imagePath?: string | null): Promise<void>;
+    enableReplaceBackground(imagePath?: ImageResolvedAssetSource | null): Promise<void>;
     disableReplaceBackground(): Promise<void>;
     isBlurEnabled(): boolean;
     hasVirtualBackground(): boolean;

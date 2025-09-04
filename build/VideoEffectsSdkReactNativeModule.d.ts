@@ -1,3 +1,4 @@
+import { ImageResolvedAssetSource } from "react-native";
 import { InitializationResult, TsvbVideoEffectsConfig, VideoEffectsSdkReactNativeModule } from "./VideoEffectsSdkReactNativeModule.types";
 declare const VideoEffectsSdkReactNativeModule: VideoEffectsSdkReactNativeModule;
 declare class TsvbVideoEffects {
@@ -5,7 +6,7 @@ declare class TsvbVideoEffects {
     initialize(config: TsvbVideoEffectsConfig): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
     disableBlurBackground(): Promise<void>;
-    enableReplaceBackground(imagePath?: string | null): Promise<void>;
+    enableReplaceBackground(imagePath?: ImageResolvedAssetSource | null): Promise<void>;
     disableReplaceBackground(): Promise<void>;
     isBlurEnabled(): boolean;
     isVirtualBackgroundEnabled(): boolean;
