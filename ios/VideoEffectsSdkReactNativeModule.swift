@@ -85,6 +85,14 @@ public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModulePro
         Function("isInitialized") {
             return self.isInitialized
         }
+
+        Function("isBlurEnabled") {
+            return self.isBlurEnabled
+        }
+        
+        Function("hasVirtualBackground") {
+            return self.hasVirtualBackground
+        }
         
         Function("cleanup") {
             self.cleanup()
