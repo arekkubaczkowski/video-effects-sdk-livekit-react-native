@@ -5,7 +5,6 @@ import type {
   EffectsConfig,
   EffectsEvent,
   EffectsState,
-  EffectType,
   InitializationResult,
   NativeModuleInterface,
   ReplaceOptions,
@@ -23,7 +22,6 @@ class TsvbVideoEffects {
     activeEffect: "none",
     error: null,
   };
-  private _trackId: string | null = null;
   private _subscribers = new Set<(event: EffectsEvent) => void>();
 
   async initialize(
@@ -39,8 +37,6 @@ class TsvbVideoEffects {
         this.updateState({ error: result.error || "Initialization failed" });
         throw new Error(result.error || "Initialization failed");
       }
-
-      this._trackId = trackId;
 
       this.updateState({
         isInitialized: true,
@@ -118,7 +114,6 @@ class TsvbVideoEffects {
       // Ignore cleanup errors
     }
 
-    this._trackId = null;
     this._state = {
       isInitialized: false,
       isReady: false,
