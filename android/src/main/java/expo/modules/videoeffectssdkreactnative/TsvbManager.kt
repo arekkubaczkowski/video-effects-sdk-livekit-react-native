@@ -10,7 +10,7 @@ import com.effectssdk.tsvb.EffectsSDKStatus
 import com.effectssdk.tsvb.pipeline.CameraPipeline
 import com.effectssdk.tsvb.pipeline.ColorCorrectionMode
 import com.effectssdk.tsvb.pipeline.PipelineMode
-import com.oney.WebRTCModule.videoEffects.CapturerProvider
+import com.effectssdk.tsvb.pipeline.SegmentationMode
 import java.net.URL
 
 /**
@@ -174,27 +174,33 @@ class TsvbManager(private val context: Context) {
 
     fun createPipeline(width: Int, height: Int, cameraName: String): CameraPipeline? {
         synchronized(lock) {
-            val factory = EffectsSDK.createSDKFactory()
-            val camera = detectCamera(cameraName)
-            val pipeline = factory.createCameraPipeline(
-                context,
-                optionsCache.pipelineMode,
-                optionsCache.segmentationMode,
-                optionsCache.colorCorrectionMode,
-                optionsCache.backgroundBitmap,
-                optionsCache.colorGradingReference,
-                optionsCache.segmentationGap,
-                optionsCache.faceDetectionGap,
-                optionsCache.blurPower,
-                optionsCache.beautificationPower,
-                optionsCache.isBeautificationEnabled,
-                null, // FPSListener
-                null, // OrientationChangeListener
-                Size(width, height),
-                camera
-            )
-            cameraPipeline = pipeline
-            return pipeline
+            try {
+                val factory = EffectsSDK.createSDKFactory()
+                val camera = detectCamera(cameraName)
+                val emptyBitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+                val pipeline = factory.createCameraPipeline(
+                    context,
+                    optionsCache.pipelineMode,
+                    SegmentationMode.AUTO,
+                    optionsCache.colorCorrectionMode,
+                    optionsCache.backgroundBitmap ?: emptyBitmap,
+                    optionsCache.colorGradingReference ?: emptyBitmap,
+                    0, // segmentationGap
+                    0, // faceDetectionGap
+                    optionsCache.blurPower,
+                    optionsCache.beautificationPower,
+                    optionsCache.isBeautificationEnabled,
+                    null, // FPSListener
+                    null, // OrientationChangeListener
+                    Size(width, height),
+                    camera
+                )
+                cameraPipeline = pipeline
+                return pipeline
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create pipeline", e)
+                return null
+            }
         }
     }
 
@@ -209,23 +215,55 @@ class TsvbManager(private val context: Context) {
         return cameraPipeline
     }
 
-    // MARK: - Capturer Registration
+    // MARK: - Capturer Registration (via reflection to avoid compile-time dependency on fork)
 
     private fun registerCapturerFactory() {
-        CapturerProvider.setFactory { cameraName, eventsHandler, enumerator ->
-            Log.d(TAG, "CapturerProvider creating TsvbCapturer for: $cameraName")
-            val capturer = TsvbCapturer(cameraName, eventsHandler, enumerator, this)
-            tsvbCapturer = capturer
-            capturer
+        try {
+            val providerClass = Class.forName("com.oney.WebRTCModule.videoEffects.CapturerProvider")
+            val factoryInterface = Class.forName("com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface")
+
+            // Create a dynamic proxy implementing CapturerFactoryInterface
+            val proxy = java.lang.reflect.Proxy.newProxyInstance(
+                factoryInterface.classLoader,
+                arrayOf(factoryInterface)
+            ) { _, method, args ->
+                if (method.name == "createCapturer" && args != null && args.size == 3) {
+                    val cameraName = args[0] as String
+                    @Suppress("UNCHECKED_CAST")
+                    val eventsHandler = args[1] as org.webrtc.CameraVideoCapturer.CameraEventsHandler
+                    val enumerator = args[2] as org.webrtc.CameraEnumerator
+                    Log.d(TAG, "CapturerProvider creating TsvbCapturer for: $cameraName")
+                    val capturer = TsvbCapturer(cameraName, eventsHandler, enumerator, this)
+                    tsvbCapturer = capturer
+                    capturer
+                } else {
+                    null
+                }
+            }
+
+            val setFactoryMethod = providerClass.getMethod("setFactory", factoryInterface)
+            setFactoryMethod.invoke(null, proxy)
+            Log.d(TAG, "CapturerProvider factory registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register capturer factory — react-native-webrtc fork may not have CapturerProvider", e)
         }
-        Log.d(TAG, "CapturerProvider factory registered")
+    }
+
+    private fun unregisterCapturerFactory() {
+        try {
+            val providerClass = Class.forName("com.oney.WebRTCModule.videoEffects.CapturerProvider")
+            val removeMethod = providerClass.getMethod("removeFactory")
+            removeMethod.invoke(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister capturer factory", e)
+        }
     }
 
     // MARK: - Cleanup
 
     fun cleanup() {
         synchronized(lock) {
-            CapturerProvider.removeFactory()
+            unregisterCapturerFactory()
             tsvbCapturer = null
             releasePipeline()
             isInitialized = false
