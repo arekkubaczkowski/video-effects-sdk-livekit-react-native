@@ -1,5 +1,32 @@
-import { MediaStreamTrack } from "@livekit/react-native-webrtc";
-import { ImageResolvedAssetSource } from "react-native";
+import type { ImageResolvedAssetSource } from "react-native";
+
+export type EffectType = "blur" | "replace" | "none";
+
+export interface EffectsConfig {
+  customerID: string;
+  trackId: string;
+}
+
+export interface BlurOptions {
+  /** Blur intensity 0.0 - 1.0. Default: 0.5 */
+  power?: number;
+}
+
+export interface ReplaceOptions {
+  /** Image source: require() asset, {uri: 'https://...'}, or {uri: 'file://...'} */
+  image: ImageResolvedAssetSource | { uri: string };
+}
+
+export interface EffectsState {
+  isInitialized: boolean;
+  isReady: boolean;
+  activeEffect: EffectType;
+  error: string | null;
+}
+
+export type EffectsEvent =
+  | { type: "stateChange"; state: EffectsState }
+  | { type: "error"; error: string; recoverable: boolean };
 
 export interface InitializationResult {
   success: boolean;
@@ -7,17 +34,15 @@ export interface InitializationResult {
   error?: string;
 }
 
-export type PipelineMode = "NONE" | "NO_EFFECT" | "BLUR" | "REPLACE";
-
-export interface VideoEffectsSdkReactNativeModule {
+export interface NativeModuleInterface {
   initialize(
     customerID: string,
-    trackId: string
+    trackId: string,
   ): Promise<InitializationResult>;
   enableBlurBackground(power?: number): Promise<void>;
   disableBlurBackground(): Promise<void>;
   enableReplaceBackground(
-    imagePath?: ImageResolvedAssetSource | null
+    imagePath?: ImageResolvedAssetSource | { uri: string } | null,
   ): Promise<void>;
   disableReplaceBackground(): Promise<void>;
   isBlurEnabled(): boolean;
@@ -26,16 +51,12 @@ export interface VideoEffectsSdkReactNativeModule {
   cleanup(): void;
 }
 
-export interface CaptureControllerResult {
-  success: boolean;
-  error?: string;
-  capturer?: any;
-  controller?: any;
-  cameraName?: string;
-}
-
+/** @deprecated Use EffectsConfig instead */
 export interface TsvbVideoEffectsConfig {
   customerID: string;
   defaultBlurPower?: number;
-  mediaStreamTrack: MediaStreamTrack;
+  mediaStreamTrack: { id: string };
 }
+
+/** @deprecated Use NativeModuleInterface instead */
+export type VideoEffectsSdkReactNativeModule = NativeModuleInterface;

@@ -1,166 +1,189 @@
-import {
-  ImageResolvedAssetSource,
-  NativeModules,
-  Platform,
-} from "react-native";
 import { requireNativeModule } from "expo-modules-core";
 
-import {
+import type {
+  BlurOptions,
+  EffectsConfig,
+  EffectsEvent,
+  EffectsState,
+  EffectType,
   InitializationResult,
+  NativeModuleInterface,
+  ReplaceOptions,
   TsvbVideoEffectsConfig,
-  VideoEffectsSdkReactNativeModule,
 } from "./VideoEffectsSdkReactNativeModule.types";
 
-const VideoEffectsSdkReactNativeModule = (
-  Platform.OS === "android"
-    ? {}
-    : requireNativeModule("VideoEffectsSdkReactNativeModule")
-) as VideoEffectsSdkReactNativeModule;
-
-const { WebRTCModule } = NativeModules;
+const NativeModule = requireNativeModule(
+  "VideoEffectsSdkReactNativeModule",
+) as NativeModuleInterface;
 
 class TsvbVideoEffects {
-  private config: TsvbVideoEffectsConfig | null = null;
+  private _state: EffectsState = {
+    isInitialized: false,
+    isReady: false,
+    activeEffect: "none",
+    error: null,
+  };
+  private _trackId: string | null = null;
+  private _subscribers = new Set<(event: EffectsEvent) => void>();
 
   async initialize(
-    config: TsvbVideoEffectsConfig
+    config: EffectsConfig | TsvbVideoEffectsConfig,
   ): Promise<InitializationResult> {
-    this.config = config;
+    const trackId =
+      "trackId" in config ? config.trackId : config.mediaStreamTrack.id;
 
     try {
-      if (Platform.OS === "android") {
-        const status =
-          await this.config?.mediaStreamTrack?.initializeEffectsSDK(
-            this.config.customerID
-          );
-        return { success: true, status };
-      }
-      const result = await VideoEffectsSdkReactNativeModule.initialize(
-        config.customerID,
-        config.mediaStreamTrack.id
-      );
+      const result = await NativeModule.initialize(config.customerID, trackId);
 
       if (!result.success) {
+        this.updateState({ error: result.error || "Initialization failed" });
         throw new Error(result.error || "Initialization failed");
       }
 
-      if (Platform.OS === "ios" && WebRTCModule) {
-        await WebRTCModule.mediaStreamTrackSetVideoEffects(
-          config.mediaStreamTrack.id,
-          ["tsvb"]
-        );
-      }
+      this._trackId = trackId;
+
+      this.updateState({
+        isInitialized: true,
+        isReady: true,
+        error: null,
+      });
 
       return result;
     } catch (error) {
-      throw new Error(`Failed to initialize TSVB SDK: ${error}`);
+      const msg = `Failed to initialize TSVB SDK: ${error}`;
+      this.updateState({ error: msg });
+      throw new Error(msg);
     }
   }
 
-  async enableBlurBackground(power?: number) {
+  async enableBlur(options?: BlurOptions): Promise<void> {
     this.ensureInitialized();
 
     try {
-      const blurPower = power ?? this.config?.defaultBlurPower ?? 0.3;
-
-      if (Platform.OS === "android") {
-        this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode(
-          "PipelineMode.blur"
-        );
-        this.config?.mediaStreamTrack?.setEffectsSdkBlurPower(blurPower);
-      } else {
-        await VideoEffectsSdkReactNativeModule.enableBlurBackground(blurPower);
-      }
+      const power = options?.power ?? 0.5;
+      await NativeModule.enableBlurBackground(power);
+      this.updateState({ activeEffect: "blur", error: null });
     } catch (error) {
-      throw new Error(`Failed to enable blur: ${error}`);
+      const msg = `Failed to enable blur: ${error}`;
+      this.emitError(msg, true);
+      throw new Error(msg);
     }
   }
 
-  async disableBlurBackground() {
+  async enableReplaceBackground(options: ReplaceOptions): Promise<void> {
     this.ensureInitialized();
 
     try {
-      if (Platform.OS === "android") {
-        this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode(
-          "PipelineMode.no_effect"
-        );
-      } else {
-        await VideoEffectsSdkReactNativeModule.disableBlurBackground();
-      }
+      await NativeModule.enableReplaceBackground(options.image);
+      this.updateState({ activeEffect: "replace", error: null });
     } catch (error) {
-      throw new Error(`Failed to disable blur: ${error}`);
+      const msg = `Failed to enable background replacement: ${error}`;
+      this.emitError(msg, true);
+      throw new Error(msg);
     }
   }
 
-  async enableReplaceBackground(imagePath?: ImageResolvedAssetSource | null) {
+  async disableEffects(): Promise<void> {
     this.ensureInitialized();
 
     try {
-      if (Platform.OS === "android") {
-        this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode(
-          "PipelineMode.replace"
-        );
-      } else {
-        await VideoEffectsSdkReactNativeModule.enableReplaceBackground(
-          imagePath
-        );
+      if (this._state.activeEffect === "blur") {
+        await NativeModule.disableBlurBackground();
+      } else if (this._state.activeEffect === "replace") {
+        await NativeModule.disableReplaceBackground();
       }
+      this.updateState({ activeEffect: "none", error: null });
     } catch (error) {
-      throw new Error(`Failed to enable background replacement: ${error}`);
+      const msg = `Failed to disable effects: ${error}`;
+      this.emitError(msg, true);
+      throw new Error(msg);
     }
   }
 
-  async disableReplaceBackground() {
-    this.ensureInitialized();
-
-    try {
-      if (Platform.OS === "android") {
-        this.config?.mediaStreamTrack?.setEffectsSdkPipelineMode(
-          "PipelineMode.no_effect"
-        );
-      } else {
-        await VideoEffectsSdkReactNativeModule.disableReplaceBackground();
-      }
-    } catch (error) {
-      throw new Error(`Failed to disable background replacement: ${error}`);
-    }
+  getState(): EffectsState {
+    return { ...this._state };
   }
 
-  isBlurEnabled(): boolean {
-    if (Platform.OS === "android") {
-      // TODO: Add implementation for Android
-      return false;
-    }
-    return VideoEffectsSdkReactNativeModule.isBlurEnabled();
-  }
-
-  isVirtualBackgroundEnabled() {
-    if (Platform.OS === "android") {
-      // TODO: Add implementation for Android
-      return false;
-    }
-    return VideoEffectsSdkReactNativeModule.hasVirtualBackground();
-  }
-
-  async isInitialized(): Promise<boolean> {
-    if (Platform.OS === "android") {
-      return (await this.config?.mediaStreamTrack?.isInitialized()) || false;
-    }
-    return VideoEffectsSdkReactNativeModule.isInitialized();
+  subscribe(callback: (event: EffectsEvent) => void): () => void {
+    this._subscribers.add(callback);
+    return () => {
+      this._subscribers.delete(callback);
+    };
   }
 
   cleanup(): void {
-    VideoEffectsSdkReactNativeModule.cleanup();
-    this.config = null;
+    try {
+      NativeModule.cleanup();
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    this._trackId = null;
+    this._state = {
+      isInitialized: false,
+      isReady: false,
+      activeEffect: "none",
+      error: null,
+    };
+    this.emit({ type: "stateChange", state: this.getState() });
   }
 
+  /** @deprecated Use new EffectsConfig-based initialize instead */
   getConfig(): TsvbVideoEffectsConfig | null {
-    return this.config;
+    return null;
   }
+
+  /** @deprecated Use enableBlur instead */
+  async enableBlurBackground(power?: number): Promise<void> {
+    return this.enableBlur({ power });
+  }
+
+  /** @deprecated Use disableEffects instead */
+  async disableBlurBackground(): Promise<void> {
+    return this.disableEffects();
+  }
+
+  /** @deprecated Use disableEffects instead */
+  async disableReplaceBackground(): Promise<void> {
+    return this.disableEffects();
+  }
+
+  isBlurEnabled(): boolean {
+    return this._state.activeEffect === "blur";
+  }
+
+  isVirtualBackgroundEnabled(): boolean {
+    return this._state.activeEffect === "replace";
+  }
+
+  async isInitialized(): Promise<boolean> {
+    return this._state.isInitialized;
+  }
+
+  // --- Private ---
 
   private ensureInitialized(): void {
-    if (!this.isInitialized()) {
+    if (!this._state.isInitialized) {
       throw new Error("TSVB SDK is not initialized. Call initialize() first.");
+    }
+  }
+
+  private updateState(partial: Partial<EffectsState>): void {
+    this._state = { ...this._state, ...partial };
+    this.emit({ type: "stateChange", state: this.getState() });
+  }
+
+  private emitError(error: string, recoverable: boolean): void {
+    this.emit({ type: "error", error, recoverable });
+  }
+
+  private emit(event: EffectsEvent): void {
+    for (const cb of this._subscribers) {
+      try {
+        cb(event);
+      } catch {
+        // Don't let subscriber errors propagate
+      }
     }
   }
 }
@@ -169,4 +192,4 @@ export const tsvbVideoEffects = new TsvbVideoEffects();
 
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsSdkReactNativeModule as VideoEffectsSdkReactNativeModule };
+export { NativeModule as VideoEffectsSdkReactNativeModule };
