@@ -24,10 +24,7 @@ final class TsvbFrameProcessor: NSObject {
 
     private var pipeline: Pipeline?
     private var lock = os_unfair_lock()
-
-    /// Atomic flag read on capture thread without lock (fast path).
-    /// Written under lock when effects are toggled.
-    private let _active = OSAllocatedUnfairLock(initialState: false)
+    private var _active: Bool = false
 
     init(pipeline: Pipeline) {
         self.pipeline = pipeline
@@ -35,33 +32,34 @@ final class TsvbFrameProcessor: NSObject {
     }
 
     var isActive: Bool {
-        _active.withLock { $0 }
+        os_unfair_lock_lock(&lock)
+        let val = _active
+        os_unfair_lock_unlock(&lock)
+        return val
     }
 
     func setActive(_ active: Bool) {
-        _active.withLock { $0 = active }
+        os_unfair_lock_lock(&lock)
+        _active = active
+        os_unfair_lock_unlock(&lock)
     }
 
     func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-        // Fast path — no lock needed for this check
-        guard _active.withLock({ $0 }) else {
+        os_unfair_lock_lock(&lock)
+        guard _active, let pipeline = pipeline else {
+            os_unfair_lock_unlock(&lock)
             return pixelBuffer
         }
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         guard width > 0, height > 0 else {
-            return pixelBuffer
-        }
-
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-
-        guard let pipeline = pipeline else {
+            os_unfair_lock_unlock(&lock)
             return pixelBuffer
         }
 
         let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+        os_unfair_lock_unlock(&lock)
         return result?.toCVPixelBuffer() ?? pixelBuffer
     }
 
@@ -73,8 +71,8 @@ final class TsvbFrameProcessor: NSObject {
     }
 
     func teardown() {
-        _active.withLock { $0 = false }
         os_unfair_lock_lock(&lock)
+        _active = false
         defer { os_unfair_lock_unlock(&lock) }
         pipeline = nil
     }
