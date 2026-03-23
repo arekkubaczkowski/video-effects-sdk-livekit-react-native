@@ -9,7 +9,7 @@ class TsvbVideoEffects {
     };
     _subscribers = new Set();
     async initialize(config) {
-        const trackId = "trackId" in config ? config.trackId : config.mediaStreamTrack.id;
+        const { trackId } = config;
         try {
             const result = await NativeModule.initialize(config.customerID, trackId);
             if (!result.success) {
@@ -94,31 +94,6 @@ class TsvbVideoEffects {
             error: null,
         };
         this.emit({ type: "stateChange", state: this.getState() });
-    }
-    /** @deprecated Use new EffectsConfig-based initialize instead */
-    getConfig() {
-        return null;
-    }
-    /** @deprecated Use enableBlur instead */
-    async enableBlurBackground(power) {
-        return this.enableBlur({ power });
-    }
-    /** @deprecated Use disableEffects instead */
-    async disableBlurBackground() {
-        return this.disableEffects();
-    }
-    /** @deprecated Use disableEffects instead */
-    async disableReplaceBackground() {
-        return this.disableEffects();
-    }
-    isBlurEnabled() {
-        return this._state.activeEffect === "blur";
-    }
-    isVirtualBackgroundEnabled() {
-        return this._state.activeEffect === "replace";
-    }
-    async isInitialized() {
-        return this._state.isInitialized;
     }
     // --- Private ---
     ensureInitialized() {

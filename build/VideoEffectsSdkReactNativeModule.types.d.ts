@@ -46,14 +46,4 @@ export interface NativeModuleInterface {
     isInitialized(): boolean;
     cleanup(): void;
 }
-/** @deprecated Use EffectsConfig instead */
-export interface TsvbVideoEffectsConfig {
-    customerID: string;
-    defaultBlurPower?: number;
-    mediaStreamTrack: {
-        id: string;
-    };
-}
-/** @deprecated Use NativeModuleInterface instead */
-export type VideoEffectsSdkReactNativeModule = NativeModuleInterface;
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.types.d.ts.map

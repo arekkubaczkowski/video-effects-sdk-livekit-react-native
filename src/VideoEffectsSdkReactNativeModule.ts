@@ -8,7 +8,6 @@ import type {
   InitializationResult,
   NativeModuleInterface,
   ReplaceOptions,
-  TsvbVideoEffectsConfig,
 } from "./VideoEffectsSdkReactNativeModule.types";
 
 const NativeModule = requireNativeModule(
@@ -24,11 +23,8 @@ class TsvbVideoEffects {
   };
   private _subscribers = new Set<(event: EffectsEvent) => void>();
 
-  async initialize(
-    config: EffectsConfig | TsvbVideoEffectsConfig,
-  ): Promise<InitializationResult> {
-    const trackId =
-      "trackId" in config ? config.trackId : config.mediaStreamTrack.id;
+  async initialize(config: EffectsConfig): Promise<InitializationResult> {
+    const { trackId } = config;
 
     try {
       const result = await NativeModule.initialize(config.customerID, trackId);
@@ -121,38 +117,6 @@ class TsvbVideoEffects {
       error: null,
     };
     this.emit({ type: "stateChange", state: this.getState() });
-  }
-
-  /** @deprecated Use new EffectsConfig-based initialize instead */
-  getConfig(): TsvbVideoEffectsConfig | null {
-    return null;
-  }
-
-  /** @deprecated Use enableBlur instead */
-  async enableBlurBackground(power?: number): Promise<void> {
-    return this.enableBlur({ power });
-  }
-
-  /** @deprecated Use disableEffects instead */
-  async disableBlurBackground(): Promise<void> {
-    return this.disableEffects();
-  }
-
-  /** @deprecated Use disableEffects instead */
-  async disableReplaceBackground(): Promise<void> {
-    return this.disableEffects();
-  }
-
-  isBlurEnabled(): boolean {
-    return this._state.activeEffect === "blur";
-  }
-
-  isVirtualBackgroundEnabled(): boolean {
-    return this._state.activeEffect === "replace";
-  }
-
-  async isInitialized(): Promise<boolean> {
-    return this._state.isInitialized;
   }
 
   // --- Private ---
