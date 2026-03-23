@@ -210,7 +210,10 @@ public class VideoEffectsSdkReactNativeModule: Module {
                     return ["success": false, "error": self.authErrorMessage(authResult.status)]
                 }
 
-                let pipeline = factory.newPipeline()
+                guard let pipeline = factory.newPipeline() else {
+                    self.state = .error
+                    return ["success": false, "error": "Failed to create pipeline"]
+                }
                 self.pipeline = pipeline
                 self.frameFactory = factory.newFrameFactory()
 
@@ -416,7 +419,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
     private func findWebRTCModule() -> NSObject? {
         // Find WebRTCModule via RCTBridge
-        guard let bridge = appContext.reactBridge else { return nil }
+        guard let bridge = appContext?.reactBridge else { return nil }
         let selector = NSSelectorFromString("moduleForName:")
         guard bridge.responds(to: selector) else { return nil }
         return bridge.perform(selector, with: "WebRTCModule")?.takeUnretainedValue() as? NSObject
