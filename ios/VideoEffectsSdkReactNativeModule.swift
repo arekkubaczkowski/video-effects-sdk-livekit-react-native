@@ -3,393 +3,614 @@ import AVFoundation
 import WebRTC
 import UIKit
 @preconcurrency import TSVB
-import ObjectiveC
+import os
 
+// MARK: - State
 
-// MARK: - Protocols
-
-@objc public protocol TsvbVideoEffectsModuleProtocol: AnyObject {
-    @objc(processFrameInternal:) func processFrameInternal(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer?
-    @objc var isBlurEnabled: Bool { get }
-    @objc var hasVirtualBackground: Bool { get }
+enum TsvbState: Int {
+    case uninitialized = 0
+    case authenticating = 1
+    case idle = 2    // SDK ready, no effect enabled
+    case active = 3  // Effect enabled, processing frames
+    case error = 4
 }
 
-// MARK: - Utility Functions
+// MARK: - Frame Processor
 
-func synchronized<ReturnT>(_ obj: AnyObject, closure: () -> ReturnT) -> ReturnT {
-    objc_sync_enter(obj)
-    defer { objc_sync_exit(obj) }
-    return closure()
+/// Per-usage frame processor. NOT a singleton.
+/// Holds a strong reference to the pipeline and lock.
+/// Created when effects are initialized, destroyed on cleanup.
+final class TsvbFrameProcessor: NSObject {
+
+    private var pipeline: Pipeline?
+    private var lock = os_unfair_lock()
+    private var _active: Bool = false
+
+    init(pipeline: Pipeline) {
+        self.pipeline = pipeline
+        super.init()
+    }
+
+    var isActive: Bool {
+        os_unfair_lock_lock(&lock)
+        let val = _active
+        os_unfair_lock_unlock(&lock)
+        return val
+    }
+
+    func setActive(_ active: Bool) {
+        os_unfair_lock_lock(&lock)
+        _active = active
+        os_unfair_lock_unlock(&lock)
+    }
+
+    func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        os_unfair_lock_lock(&lock)
+        guard _active, let pipeline = pipeline else {
+            os_unfair_lock_unlock(&lock)
+            return pixelBuffer
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        guard width > 0, height > 0 else {
+            os_unfair_lock_unlock(&lock)
+            return pixelBuffer
+        }
+
+        let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+        os_unfair_lock_unlock(&lock)
+        return result?.toCVPixelBuffer() ?? pixelBuffer
+    }
+
+    /// Called under external synchronization (module's control queue).
+    func updatePipeline(_ pipeline: Pipeline?) {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
+        self.pipeline = pipeline
+    }
+
+    func teardown() {
+        os_unfair_lock_lock(&lock)
+        _active = false
+        defer { os_unfair_lock_unlock(&lock) }
+        pipeline = nil
+    }
+}
+
+// MARK: - VideoFrameProcessorDelegate bridge
+
+/// ObjC-compatible wrapper that conforms to the fork's VideoFrameProcessorDelegate.
+/// Delegates all frame processing to TsvbFrameProcessor.
+@objc(TsvbVideoFrameProcessorBridge)
+final class TsvbVideoFrameProcessorBridge: NSObject {
+
+    private let processor: TsvbFrameProcessor
+
+    init(processor: TsvbFrameProcessor) {
+        self.processor = processor
+        super.init()
+    }
+
+    private var lastReportedWidth: Int32 = 0
+    private var lastReportedHeight: Int32 = 0
+    var onFrameSizeChanged: ((Int32, Int32) -> Void)?
+
+    /// Called by WebRTC's VideoEffectProcessor on the capture thread.
+    @objc func capturer(_ capturer: RTCVideoCapturer, didCaptureVideoFrame frame: RTCVideoFrame) -> RTCVideoFrame {
+        // Report frame dimensions to module (for background image cropping)
+        let w = frame.width
+        let h = frame.height
+        if w != lastReportedWidth || h != lastReportedHeight {
+            lastReportedWidth = w
+            lastReportedHeight = h
+            onFrameSizeChanged?(w, h)
+        }
+
+        guard processor.isActive else {
+            return frame
+        }
+
+        guard let rtcBuffer = frame.buffer as? RTCCVPixelBuffer else {
+            return frame
+        }
+
+        guard let processedBuffer = processor.processFrame(rtcBuffer.pixelBuffer) else {
+            return frame
+        }
+
+        let newBuffer = RTCCVPixelBuffer(pixelBuffer: processedBuffer)
+        return RTCVideoFrame(buffer: newBuffer, rotation: frame.rotation, timeStampNs: frame.timeStampNs)
+    }
 }
 
 // MARK: - Main Module
 
-public class VideoEffectsSdkReactNativeModule: Module, TsvbVideoEffectsModuleProtocol {
-    
-    // MARK: - Singleton
-    
-    private static var _sharedInstance: VideoEffectsSdkReactNativeModule?
-    
-    @objc public static func sharedInstance() -> Any? {
-        return _sharedInstance
-    }
-    
+public class VideoEffectsSdkReactNativeModule: Module {
+
     // MARK: - Properties
-    
-    // TSVB SDK components
+
     private var sdkFactory: SDKFactory?
     private var pipeline: Pipeline?
     private var frameFactory: FrameFactory?
-    
-    // Video processing
-    private var videoFrameProcessor: TsvbVideoFrameProcessor?
-    
-    // State management
-    private var isInitialized = false
+
+    private var frameProcessor: TsvbFrameProcessor?
+    private var processorBridge: TsvbVideoFrameProcessorBridge?
+
+    private var state: TsvbState = .uninitialized
     private var blurEnabled = false
     private var replaceBackgroundEnabled = false
-    private var pipelineReady = false
-    private var currentTrackId: String?
-    
     private var replacementController: (any ReplacementController)?
-    
-    // Concurrency
-    private let pipelineControlQueue = DispatchQueue(label: "com.tsvb.pipeline-control")
-    
-    // MARK: - Expo Module Definition
-    
+
+    /// The track ID the processor is currently attached to.
+    private var attachedTrackId: String?
+
+    /// Device orientation reported by JS layer. Used for background image rotation.
+    private var currentOrientation: String = "portrait"
+
+    /// Original (unrotated) background image — kept for re-rotation on orientation change.
+    private var originalBackgroundImage: UIImage?
+
+    /// Last known camera frame dimensions (landscape buffer). Updated by frame processor.
+    private var lastFrameWidth: Int = 0
+    private var lastFrameHeight: Int = 0
+
+    /// Serial queue for ALL state mutations and pipeline operations.
+    private let controlQueue = DispatchQueue(label: "com.tsvb.control")
+
+    // MARK: - Module Definition
+
     public func definition() -> ModuleDefinition {
         Name("VideoEffectsSdkReactNativeModule")
-        
-        OnCreate {
-            VideoEffectsSdkReactNativeModule._sharedInstance = self
-        }
-        
+
         AsyncFunction("initialize") { (customerID: String, trackId: String) -> [String: Any] in
-            return await self.initializeSDK(customerID: customerID, trackId: trackId)
+            return await self.doInitialize(customerID: customerID, trackId: trackId)
         }
-        
+
         AsyncFunction("enableBlurBackground") { (power: Double?) -> [String: Any] in
-            let blurPower = power ?? 0.3
-            return await self.enableBlurBackground(power: blurPower)
+            return await self.doEnableBlur(power: Float(power ?? 0.5))
         }
-        
+
         AsyncFunction("disableBlurBackground") { () -> [String: Any] in
-            return await self.disableBlurBackground()
+            return await self.doDisableBlur()
         }
-        
+
         AsyncFunction("enableReplaceBackground") { (assetSource: [String: Any]?, promise: Promise) in
             Task {
-                let result = await self.enableReplaceBackground(assetSource: assetSource)
+                let result = await self.doEnableReplace(assetSource: assetSource)
                 promise.resolve(result)
             }
         }
-        
+
         AsyncFunction("disableReplaceBackground") { () -> [String: Any] in
-            return await self.disableReplaceBackground()
+            return await self.doDisableReplace()
         }
-        
+
         Function("isInitialized") {
-            return self.isInitialized
+            return self.state == .idle || self.state == .active
         }
 
         Function("isBlurEnabled") {
-            return self.isBlurEnabled
+            return self.blurEnabled
         }
-        
+
         Function("hasVirtualBackground") {
-            return self.hasVirtualBackground
+            return self.replaceBackgroundEnabled
         }
-        
+
         Function("cleanup") {
-            self.cleanup()
+            self.doCleanup()
         }
-        
-    }
-    
-    // MARK: - Public API (TsvbVideoEffectsModuleProtocol)
-    
-    @objc public func isSDKInitialized() -> Bool { 
-        return isInitialized 
-    }
-    
-    @objc public var isBlurEnabled: Bool { 
-        return blurEnabled 
-    }
-    
-    @objc public var hasVirtualBackground: Bool { 
-        return replaceBackgroundEnabled 
-    }
-    
-    // MARK: - SDK Operations
-    
-    private func initializeSDK(customerID: String, trackId: String) async -> [String: Any] {
-        // Check if track ID has changed
-        let trackIdChanged = currentTrackId != nil && currentTrackId != trackId
-        
-        if trackIdChanged {
-            currentTrackId = trackId
-            registerVideoProcessor()
-            
-            return ["success": true, "status": "track_updated"]
-        }
-        
-        // If already initialized with same track, just return success
-        if isInitialized && currentTrackId == trackId {
-            return ["success": true, "status": "already_initialized"]
-        }
-        
-        // First-time initialization
-        do {
-            sdkFactory = TSVB.SDKFactory()
-            
-            guard let factory = sdkFactory else {
-                return ["success": false, "error": "Failed to create SDK factory"]
+
+        Function("setDeviceOrientation") { (orientation: String) in
+            let changed = self.currentOrientation != orientation
+            self.currentOrientation = orientation
+            if changed {
+                self.reapplyBackgroundForOrientation()
             }
-            
-            let result = try await factory.auth(customerID: customerID)
-            
-            if result.status == .active {
-                pipeline = factory.newPipeline()
-                frameFactory = factory.newFrameFactory()
-                
-                if let pipeline = pipeline {
-                    let pipelineConfig = pipeline.copyConfiguration()
-                    pipelineConfig?.segmentationPreset = .quality
-                    pipeline.setConfiguration(pipelineConfig!)
+        }
+    }
+
+    // MARK: - Initialize
+
+    private func doInitialize(customerID: String, trackId: String) async -> [String: Any] {
+        return await onControlQueue { () async -> [String: Any] in
+            // If already initialized, just re-attach to new track if needed
+            if self.state == .idle || self.state == .active {
+                if self.attachedTrackId != trackId {
+                    let attachResult = self.attachProcessorToTrack(trackId)
+                    return ["success": true, "status": "already_initialized", "attachResult": attachResult]
                 }
-                
-                isInitialized = true
-                pipelineReady = true
-                currentTrackId = trackId
-                
-                registerVideoProcessor()
-                
-                return ["success": true, "status": "active"]
-            } else {
-                let errorMessage = getAuthErrorMessage(status: result.status)
-                return ["success": false, "error": errorMessage]
+                return ["success": true, "status": "already_initialized", "attachResult": "already_attached"]
             }
-        } catch {
-            return ["success": false, "error": error.localizedDescription]
-        }
-    }
-    
-    private func enableBlurBackground(power: Double) async -> [String: Any] {
-        guard isInitialized, let pipeline = pipeline else {
-            return ["success": false, "error": "SDK not initialized"]
-        }
-        
-        return await inControlQueue {
-            return synchronized(pipeline) {
-                let result = pipeline.enableBlurBackground(power: Float(power))
-                
-                if result == .ok {
-                    pipeline.disableReplaceBackground()
-                    pipeline.disableDenoiseBackground()
-                    self.blurEnabled = true
-                    self.pipelineReady = true
-                    
-                    return ["success": true]
-                } else {
-                    return ["success": false, "error": "Failed to enable blur background"]
+
+            guard self.state != .authenticating else {
+                return ["success": false, "error": "Initialization already in progress"]
+            }
+
+            self.state = .authenticating
+
+            do {
+                let factory = TSVB.SDKFactory()
+                self.sdkFactory = factory
+
+                let authResult = try await factory.auth(customerID: customerID)
+
+                guard authResult.status == .active else {
+                    self.state = .error
+                    return ["success": false, "error": self.authErrorMessage(authResult.status)]
                 }
+
+                guard let pipeline = factory.newPipeline() else {
+                    self.state = .error
+                    return ["success": false, "error": "Failed to create pipeline"]
+                }
+                self.pipeline = pipeline
+                self.frameFactory = factory.newFrameFactory()
+
+                if let config = pipeline.copyConfiguration() {
+                    config.segmentationPreset = .quality
+                    pipeline.setConfiguration(config)
+                }
+
+                // Create frame processor (not a singleton — owned by this module instance)
+                let fp = TsvbFrameProcessor(pipeline: pipeline)
+                self.frameProcessor = fp
+                let bridge = TsvbVideoFrameProcessorBridge(processor: fp)
+                bridge.onFrameSizeChanged = { [weak self] w, h in
+                    self?.lastFrameWidth = Int(w)
+                    self?.lastFrameHeight = Int(h)
+                }
+                self.processorBridge = bridge
+
+                self.state = .idle
+
+                // Attach to track
+                let attachResult = self.attachProcessorToTrack(trackId)
+
+                return ["success": true, "status": "active", "attachResult": attachResult]
+            } catch {
+                self.state = .error
+                return ["success": false, "error": error.localizedDescription]
             }
         }
     }
-    
-    private func disableBlurBackground() async -> [String: Any] {
-        guard isInitialized, let pipeline = pipeline else {
-            return ["success": false, "error": "SDK not initialized"]
+
+    // MARK: - Effects Control
+
+    private func doEnableBlur(power: Float) async -> [String: Any] {
+        return await onControlQueue {
+            let currentState = "\(self.state)"
+            let hasPipeline = self.pipeline != nil
+            let hasProcessor = self.frameProcessor != nil
+
+            guard self.state == .idle || self.state == .active,
+                  let pipeline = self.pipeline else {
+                return ["success": false, "error": "SDK not initialized", "debug_state": currentState, "debug_hasPipeline": hasPipeline]
+            }
+
+            let result = pipeline.enableBlurBackground(power: power)
+            guard result == .ok else {
+                return ["success": false, "error": "Failed to enable blur, result: \(result)"]
+            }
+
+            pipeline.disableReplaceBackground()
+            pipeline.disableDenoiseBackground()
+            self.blurEnabled = true
+            self.replaceBackgroundEnabled = false
+            self.replacementController = nil
+            self.state = .active
+            self.frameProcessor?.setActive(true)
+
+            return [
+                "success": true,
+                "debug_processorActive": self.frameProcessor?.isActive ?? false,
+                "debug_hasProcessor": hasProcessor,
+                "debug_attachedTrack": self.attachedTrackId ?? "none",
+            ]
         }
-        
-        return await inControlQueue {
-            return synchronized(pipeline) {
-                pipeline.disableBlurBackground()
-                self.blurEnabled = false
-                
+    }
+
+    private func doDisableBlur() async -> [String: Any] {
+        return await onControlQueue {
+            guard let pipeline = self.pipeline else {
                 return ["success": true]
             }
+
+            pipeline.disableBlurBackground()
+            self.blurEnabled = false
+
+            if !self.replaceBackgroundEnabled {
+                self.state = .idle
+                self.frameProcessor?.setActive(false)
+            }
+
+            return ["success": true]
         }
     }
-    
-    private func enableReplaceBackground(assetSource: [String: Any]?) async -> [String: Any] {
-        guard isInitialized, let pipeline = pipeline else {
+
+    private func doEnableReplace(assetSource: [String: Any]?) async -> [String: Any] {
+        guard state == .idle || state == .active, let pipeline = pipeline else {
             return ["success": false, "error": "SDK not initialized"]
         }
-        
-        
-        // Load image first (outside of synchronized block)
+
+        // Load image outside control queue (potentially slow I/O)
         var backgroundImage: UIImage? = nil
-        
-        if let source = assetSource {
-            if let uri = source["uri"] as? String {
-                if uri.hasPrefix("http://") || uri.hasPrefix("https://") {
-                    if let url = URL(string: uri) {
-                        do {
-                            let (data, _) = try await URLSession.shared.data(from: url)
-                            if let image = UIImage(data: data) {
-                                backgroundImage = image
-                            }
-                        } catch {
-                            return ["success": false, "error": "Failed to download image: \(error.localizedDescription)"]
-                        }
-                    }
-                }
-                else if uri.hasPrefix("file://") {
-                    let path = String(uri.dropFirst(7)) // Remove "file://" prefix
-                    if let image = UIImage(contentsOfFile: path) {
-                        backgroundImage = image
-                    }
-                }
-                else {
-                    let filename = (uri as NSString).lastPathComponent
-                    let nameWithoutExt = (filename as NSString).deletingPathExtension
-                    if let image = UIImage(named: nameWithoutExt) {
-                        backgroundImage = image
-                    }
-                }
-                
-                if backgroundImage == nil {
-                    return ["success": false, "error": "Failed to load background image from URI: \(uri)"]
-                }
-            } else {
-                return ["success": false, "error": "Asset source missing 'uri' property"]
+
+        if let source = assetSource, let uri = source["uri"] as? String {
+            backgroundImage = await loadImage(uri: uri)
+            if backgroundImage == nil {
+                return ["success": false, "error": "Failed to load image from: \(uri)"]
             }
         }
-        
-        return await inControlQueue { () -> [String: Any] in
-            return synchronized(pipeline) {
-                
-                var controller: (any ReplacementController)? = nil
-                let result = pipeline.enableReplaceBackground(&controller)
-                
-                if result == .ok, let replacementController = controller {
-                    self.replacementController = replacementController
-                    
-                    if let image = backgroundImage,
-                       let frameFactory = self.frameFactory {
-                        
-                        if let imageData = image.jpegData(compressionQuality: 0.9),
-                           let tsvbFrame = frameFactory.image(with: imageData) {
-                            
-                            replacementController.background = tsvbFrame
-                        } else if let imageData = image.pngData(),
-                            let tsvbFrame = frameFactory.image(with: imageData) {
-                            replacementController.background = tsvbFrame
-                        }
-                    }
-                }
-                
-                if result == .ok {
-                    pipeline.disableBlurBackground()
-                    pipeline.disableDenoiseBackground()
-                    self.blurEnabled = false
-                    self.replaceBackgroundEnabled = true
-                    
-                    return ["success": true]
-                } else {
-                    return ["success": false, "error": "Failed to enable replace background"]
-                }
+
+        return await onControlQueue {
+            var controller: (any ReplacementController)? = nil
+            let result = pipeline.enableReplaceBackground(&controller)
+
+            guard result == .ok, let ctrl = controller else {
+                return ["success": false, "error": "Failed to enable replace background"]
             }
+
+            self.replacementController = ctrl
+
+            if let image = backgroundImage {
+                self.originalBackgroundImage = image
+                self.applyBackgroundImage(image, to: ctrl)
+            }
+
+            pipeline.disableBlurBackground()
+            pipeline.disableDenoiseBackground()
+            self.blurEnabled = false
+            self.replaceBackgroundEnabled = true
+            self.state = .active
+            self.frameProcessor?.setActive(true)
+
+            return ["success": true]
         }
     }
-    
-    private func disableReplaceBackground() async -> [String: Any] {
-        guard isInitialized, let pipeline = pipeline else {
-            return ["success": false, "error": "SDK not initialized"]
-        }
-        
-        
-        return await inControlQueue { () -> [String: Any] in
-            return synchronized(pipeline) {
-                pipeline.disableReplaceBackground()
-                self.replaceBackgroundEnabled = false
-                self.replacementController = nil
-                
+
+    private func doDisableReplace() async -> [String: Any] {
+        return await onControlQueue {
+            guard let pipeline = self.pipeline else {
                 return ["success": true]
             }
-        }
-    }
-    
-    @objc(processFrameInternal:) public func processFrameInternal(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-        guard isInitialized, let pipeline = pipeline, pipelineReady else {
-            return pixelBuffer
-        }
-        
-        let frameWidth = CVPixelBufferGetWidth(pixelBuffer)
-        let frameHeight = CVPixelBufferGetHeight(pixelBuffer)
-        
-        guard frameWidth > 0 && frameHeight > 0 else {
-            return pixelBuffer
-        }
-        
-        let result = synchronized(pipeline) {
-            return pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
-        }
-        
-        return result?.toCVPixelBuffer() ?? pixelBuffer
-    }
-    
-    private func inControlQueue<ReturnT>(closure: @escaping () -> ReturnT) async -> ReturnT {
-        return await withCheckedContinuation { continuation in
-            pipelineControlQueue.async {
-                let result = closure()
-                continuation.resume(returning: result)
+
+            pipeline.disableReplaceBackground()
+            self.replaceBackgroundEnabled = false
+            self.replacementController = nil
+            self.originalBackgroundImage = nil
+
+            if !self.blurEnabled {
+                self.state = .idle
+                self.frameProcessor?.setActive(false)
             }
+
+            return ["success": true]
         }
     }
-    
-    private func getAuthErrorMessage(status: AuthStatus) -> String {
-        switch status {
-        case .expired:
-            return "License expired"
-        case .inactive:
-            return "License is inactive"
-        default:
-            return "Unknown authorization error"
-        }
-    }
-    
-    // MARK: - Video Processor Management
-    
-    private func registerVideoProcessor() {
-        unregisterVideoProcessor() // Clean up any existing processor first
-        videoFrameProcessor = TsvbVideoFrameProcessor(module: self)
-        videoFrameProcessor?.register()
-    }
-    
-    private func unregisterVideoProcessor() {
-        videoFrameProcessor?.unregister()
-        videoFrameProcessor = nil
-    }
-    
-    // MARK: - Lifecycle Management
-    
-    private func cleanup() {
-        if let pipeline = pipeline {
-            synchronized(pipeline) {
+
+    // MARK: - Cleanup
+
+    private func doCleanup() {
+        controlQueue.sync {
+            self.frameProcessor?.teardown()
+            self.detachProcessorFromTrack()
+
+            if let pipeline = self.pipeline {
                 pipeline.disableBlurBackground()
                 pipeline.disableReplaceBackground()
                 pipeline.disableDenoiseBackground()
             }
+
+            self.pipeline = nil
+            self.frameFactory = nil
+            self.sdkFactory = nil
+            self.frameProcessor = nil
+            self.processorBridge = nil
+            self.blurEnabled = false
+            self.replaceBackgroundEnabled = false
+            self.replacementController = nil
+            self.state = .uninitialized
         }
-        
-        // Unregister video processor
-        unregisterVideoProcessor()
-        
-        pipeline = nil
-        frameFactory = nil
-        sdkFactory = nil
-        isInitialized = false
-        blurEnabled = false
-        replaceBackgroundEnabled = false
-        pipelineReady = false
-        currentTrackId = nil
-        replacementController = nil
     }
-    
+
     deinit {
-        cleanup()
+        frameProcessor?.teardown()
+        // Don't call detachProcessorFromTrack in deinit — ObjC runtime calls are unsafe here
+        if let pipeline = pipeline {
+            pipeline.disableBlurBackground()
+            pipeline.disableReplaceBackground()
+            pipeline.disableDenoiseBackground()
+        }
+    }
+
+    // MARK: - Track Attachment (via fork's direct API)
+
+    @discardableResult
+    private func attachProcessorToTrack(_ trackId: String) -> String {
+        if attachedTrackId != nil && attachedTrackId != trackId {
+            detachProcessorFromTrack()
+        }
+
+        guard let bridge = processorBridge else {
+            NSLog("[VideoEffects Native] processorBridge is nil")
+            return "error:no_processor_bridge"
+        }
+
+        // Register with ProcessorProvider (static class — works in both bridged and bridgeless mode)
+        if let providerClass = NSClassFromString("ProcessorProvider") as? NSObject.Type {
+            let addSelector = NSSelectorFromString("addProcessor:forName:")
+            if providerClass.responds(to: addSelector) {
+                providerClass.perform(addSelector, with: bridge, with: "tsvb")
+                attachedTrackId = trackId
+                NSLog("[VideoEffects Native] Registered processor with ProcessorProvider, trackId: \(trackId)")
+                return "registered:\(trackId)"
+            } else {
+                NSLog("[VideoEffects Native] ProcessorProvider does not respond to addProcessor:forName:")
+                return "error:no_add_method"
+            }
+        } else {
+            NSLog("[VideoEffects Native] ProcessorProvider class not found")
+            return "error:no_processor_provider"
+        }
+    }
+
+    private func detachProcessorFromTrack() {
+        guard attachedTrackId != nil else { return }
+
+        if let providerClass = NSClassFromString("ProcessorProvider") as? NSObject.Type {
+            let removeSelector = NSSelectorFromString("removeProcessor:")
+            if providerClass.responds(to: removeSelector) {
+                providerClass.perform(removeSelector, with: "tsvb")
+            }
+        }
+
+        attachedTrackId = nil
+    }
+
+    // MARK: - Helpers
+
+    private func onControlQueue<T>(closure: @escaping () -> T) async -> T {
+        return await withCheckedContinuation { continuation in
+            controlQueue.async {
+                continuation.resume(returning: closure())
+            }
+        }
+    }
+
+    private func applyBackgroundImage(_ image: UIImage, to controller: any ReplacementController) {
+        let rotated = Self.rotateForCameraPipeline(image, orientation: currentOrientation)
+        guard let factory = self.frameFactory else { return }
+
+        if let data = rotated.jpegData(compressionQuality: 0.9),
+           let frame = factory.image(with: data) {
+            controller.background = frame
+        } else if let data = rotated.pngData(),
+                  let frame = factory.image(with: data) {
+            controller.background = frame
+        }
+    }
+
+    /// Center-crop image to target aspect ratio (like CSS object-fit: cover)
+    private static func centerCrop(_ image: UIImage, toAspectRatio targetRatio: CGFloat) -> UIImage {
+        let imageRatio = image.size.width / image.size.height
+
+        if abs(imageRatio - targetRatio) < 0.01 {
+            return image // Already correct aspect ratio
+        }
+
+        let cropRect: CGRect
+        if imageRatio > targetRatio {
+            // Image is wider — crop sides
+            let newWidth = image.size.height * targetRatio
+            let xOffset = (image.size.width - newWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: image.size.height)
+        } else {
+            // Image is taller — crop top/bottom
+            let newHeight = image.size.width / targetRatio
+            let yOffset = (image.size.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: image.size.width, height: newHeight)
+        }
+
+        // Scale cropRect to pixel coordinates
+        let scale = image.scale
+        let pixelRect = CGRect(
+            x: cropRect.origin.x * scale,
+            y: cropRect.origin.y * scale,
+            width: cropRect.size.width * scale,
+            height: cropRect.size.height * scale
+        )
+
+        guard let cgImage = image.cgImage?.cropping(to: pixelRect) else { return image }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: image.imageOrientation)
+    }
+
+    private func reapplyBackgroundForOrientation() {
+        controlQueue.async {
+            guard self.replaceBackgroundEnabled,
+                  let image = self.originalBackgroundImage,
+                  let ctrl = self.replacementController else { return }
+            self.applyBackgroundImage(image, to: ctrl)
+        }
+    }
+
+    private func onControlQueue<T>(closure: @escaping () async -> T) async -> T {
+        return await withCheckedContinuation { continuation in
+            self.controlQueue.async {
+                Task {
+                    let result = await closure()
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+    }
+
+    private func loadImage(uri: String) async -> UIImage? {
+        var image: UIImage?
+
+        if uri.hasPrefix("http://") || uri.hasPrefix("https://"),
+           let url = URL(string: uri) {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                image = UIImage(data: data)
+            } catch {
+                return nil
+            }
+        } else if uri.hasPrefix("file://") {
+            image = UIImage(contentsOfFile: String(uri.dropFirst(7)))
+        } else {
+            let name = ((uri as NSString).lastPathComponent as NSString).deletingPathExtension
+            image = UIImage(named: name)
+        }
+
+        return image
+    }
+
+    /// Rotate background image to match the camera pipeline's buffer orientation.
+    /// SDK treats landscape-left as base orientation. Empirically confirmed:
+    /// - portrait:        needs 90° CCW
+    /// - landscape-left:  no rotation needed
+    /// - landscape-right: needs 180°
+    private static func rotateForCameraPipeline(_ image: UIImage, orientation: String) -> UIImage {
+        switch orientation {
+        case "landscape-left":
+            return image
+        case "landscape-right":
+            return rotateImage(image, angle: .pi, swapDimensions: false)
+        default:
+            // portrait
+            return rotateImage(image, angle: -.pi / 2, swapDimensions: true)
+        }
+    }
+
+    private static func rotateImage(_ image: UIImage, angle: CGFloat, swapDimensions: Bool) -> UIImage {
+        let outputSize = swapDimensions
+            ? CGSize(width: image.size.height, height: image.size.width)
+            : image.size
+
+        UIGraphicsBeginImageContextWithOptions(outputSize, false, image.scale)
+        guard let context = UIGraphicsGetCurrentContext() else { return image }
+
+        context.translateBy(x: outputSize.width / 2, y: outputSize.height / 2)
+        context.rotate(by: angle)
+        image.draw(in: CGRect(
+            x: -image.size.width / 2,
+            y: -image.size.height / 2,
+            width: image.size.width,
+            height: image.size.height
+        ))
+
+        let rotated = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return rotated ?? image
+    }
+
+    private func authErrorMessage(_ status: AuthStatus) -> String {
+        switch status {
+        case .expired: return "License expired"
+        case .inactive: return "License is inactive"
+        default: return "Unknown authorization error"
+        }
     }
 }
