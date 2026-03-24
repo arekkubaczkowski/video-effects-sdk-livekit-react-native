@@ -1,4 +1,4 @@
-import type { BlurOptions, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleInterface, ReplaceOptions } from "./VideoEffectsSdkReactNativeModule.types";
+import type { BlurOptions, DeviceOrientation, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleInterface, ReplaceOptions } from "./VideoEffectsSdkReactNativeModule.types";
 declare const NativeModule: NativeModuleInterface;
 declare class TsvbVideoEffects {
     private _state;
@@ -9,6 +9,7 @@ declare class TsvbVideoEffects {
     disableEffects(): Promise<void>;
     getState(): EffectsState;
     subscribe(callback: (event: EffectsEvent) => void): () => void;
+    setDeviceOrientation(orientation: DeviceOrientation): void;
     cleanup(): void;
     private ensureInitialized;
     private updateState;

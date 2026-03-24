@@ -33,6 +33,7 @@ export interface InitializationResult {
     status?: string;
     error?: string;
 }
+export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
 export interface NativeModuleInterface {
     initialize(customerID: string, trackId: string): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
@@ -44,6 +45,7 @@ export interface NativeModuleInterface {
     isBlurEnabled(): boolean;
     hasVirtualBackground(): boolean;
     isInitialized(): boolean;
+    setDeviceOrientation(orientation: DeviceOrientation): void;
     cleanup(): void;
 }
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.types.d.ts.map

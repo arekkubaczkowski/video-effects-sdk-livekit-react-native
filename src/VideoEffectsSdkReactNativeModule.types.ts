@@ -34,6 +34,8 @@ export interface InitializationResult {
   error?: string;
 }
 
+export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
+
 export interface NativeModuleInterface {
   initialize(
     customerID: string,
@@ -48,6 +50,7 @@ export interface NativeModuleInterface {
   isBlurEnabled(): boolean;
   hasVirtualBackground(): boolean;
   isInitialized(): boolean;
+  setDeviceOrientation(orientation: DeviceOrientation): void;
   cleanup(): void;
 }
 

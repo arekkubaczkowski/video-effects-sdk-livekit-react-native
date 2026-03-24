@@ -63,5 +63,9 @@ class VideoEffectsSdkReactNativeModule : Module() {
         Function("cleanup") {
             tsvbManager.cleanup()
         }
+
+        Function("setDeviceOrientation") { _: String ->
+            // No-op on Android — orientation is handled by CameraPipeline internally
+        }
     }
 }

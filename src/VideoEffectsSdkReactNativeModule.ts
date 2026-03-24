@@ -2,6 +2,7 @@ import { requireNativeModule } from "expo-modules-core";
 
 import type {
   BlurOptions,
+  DeviceOrientation,
   EffectsConfig,
   EffectsEvent,
   EffectsState,
@@ -103,6 +104,10 @@ class TsvbVideoEffects {
     };
   }
 
+  setDeviceOrientation(orientation: DeviceOrientation): void {
+    NativeModule.setDeviceOrientation(orientation);
+  }
+
   cleanup(): void {
     try {
       NativeModule.cleanup();
@@ -137,13 +142,13 @@ class TsvbVideoEffects {
   }
 
   private emit(event: EffectsEvent): void {
-    for (const cb of this._subscribers) {
+    this._subscribers.forEach(cb => {
       try {
         cb(event);
       } catch {
         // Don't let subscriber errors propagate
       }
-    }
+    });
   }
 }
 

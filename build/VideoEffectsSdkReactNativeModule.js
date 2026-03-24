@@ -80,6 +80,9 @@ class TsvbVideoEffects {
             this._subscribers.delete(callback);
         };
     }
+    setDeviceOrientation(orientation) {
+        NativeModule.setDeviceOrientation(orientation);
+    }
     cleanup() {
         try {
             NativeModule.cleanup();

@@ -31,8 +31,11 @@ dependencies {
     implementation project(':expo-modules-core')
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${safeExtGet('kotlinVersion', '1.9.10')}"
 
-    // Effects SDK
+    // Effects SDK + its runtime dependencies
     implementation 'ai.effectssdk:video:2.14.0'
+    implementation 'com.google.flogger:flogger:0.7.4'
+    implementation 'com.google.flogger:flogger-system-backend:0.7.4'
+    implementation 'com.google.guava:guava:31.1-android'
 
     // WebRTC (provided by the app via react-native-webrtc)
     compileOnly 'io.github.webrtc-sdk:android:137.7151.01'

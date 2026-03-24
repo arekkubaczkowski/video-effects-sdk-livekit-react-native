@@ -12,6 +12,8 @@ import com.effectssdk.tsvb.pipeline.ColorCorrectionMode
 import com.effectssdk.tsvb.pipeline.PipelineMode
 import com.effectssdk.tsvb.pipeline.SegmentationMode
 import java.net.URL
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Manages the Effects SDK lifecycle and CameraPipeline.
@@ -35,13 +37,44 @@ class TsvbManager(private val context: Context) {
     private var cameraPipeline: CameraPipeline? = null
     private var tsvbCapturer: TsvbCapturer? = null
     private val optionsCache = EffectsSdkOptionsCache()
+    private val imageLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    // Camera capture dimensions — set from actual frame output
+    @Volatile var captureWidth = 0
+        private set
+    @Volatile var captureHeight = 0
+        private set
+
+    // Original background bitmap (before crop/resize) for re-apply on dimension change
+    private var originalBackgroundBitmap: Bitmap? = null
+
+    fun setCaptureSize(width: Int, height: Int) {
+        val changed = captureWidth != width || captureHeight != height
+        captureWidth = width
+        captureHeight = height
+
+        // Re-apply background if dimensions changed (orientation change)
+        if (changed && isReplaceBackgroundEnabled && originalBackgroundBitmap != null) {
+            imageLoadExecutor.submit {
+                synchronized(lock) {
+                    val original = originalBackgroundBitmap ?: return@submit
+                    val fitted = centerCropAndResize(original, width, height)
+                    optionsCache.backgroundBitmap?.recycle()
+                    cameraPipeline?.setBackground(fitted)
+                    optionsCache.backgroundBitmap = fitted
+                }
+            }
+        }
+    }
 
     // MARK: - Initialization
 
     fun initialize(customerID: String, trackId: String, callback: (Map<String, Any>) -> Unit) {
-        if (isInitialized) {
-            callback(mapOf("success" to true, "status" to "already_initialized"))
-            return
+        synchronized(lock) {
+            if (isInitialized) {
+                callback(mapOf("success" to true, "status" to "already_initialized"))
+                return
+            }
         }
 
         try {
@@ -126,19 +159,24 @@ class TsvbManager(private val context: Context) {
                 if (assetSource != null) {
                     val uri = assetSource["uri"] as? String
                     if (uri != null) {
-                        Thread {
+                        imageLoadExecutor.submit {
                             try {
-                                val bitmap = loadBitmapFromUri(uri)
-                                if (bitmap != null) {
+                                val raw = loadBitmapFromUri(uri)
+                                if (raw != null) {
+                                    val targetW = if (captureWidth > 0) captureWidth else 720
+                                    val targetH = if (captureHeight > 0) captureHeight else 1280
+                                    val fitted = centerCropAndResize(raw, targetW, targetH)
                                     synchronized(lock) {
-                                        cameraPipeline?.setBackground(bitmap)
-                                        optionsCache.backgroundBitmap = bitmap
+                                        originalBackgroundBitmap = raw  // keep original for re-apply on rotation
+                                        optionsCache.backgroundBitmap?.recycle()
+                                        cameraPipeline?.setBackground(fitted)
+                                        optionsCache.backgroundBitmap = fitted
                                     }
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Failed to load background image", e)
                             }
-                        }.start()
+                        }
                     }
                 }
 
@@ -173,6 +211,10 @@ class TsvbManager(private val context: Context) {
     // MARK: - Pipeline Lifecycle (called by TsvbCapturer)
 
     fun createPipeline(width: Int, height: Int, cameraName: String): CameraPipeline? {
+        if (width <= 0 || height <= 0) {
+            Log.e(TAG, "Invalid pipeline dimensions: ${width}x${height}")
+            return null
+        }
         synchronized(lock) {
             try {
                 val factory = EffectsSDK.createSDKFactory()
@@ -262,6 +304,7 @@ class TsvbManager(private val context: Context) {
     // MARK: - Cleanup
 
     fun cleanup() {
+        imageLoadExecutor.shutdownNow()
         synchronized(lock) {
             unregisterCapturerFactory()
             tsvbCapturer = null
@@ -269,6 +312,7 @@ class TsvbManager(private val context: Context) {
             isInitialized = false
             isBlurEnabled = false
             isReplaceBackgroundEnabled = false
+            originalBackgroundBitmap = null
             optionsCache.reset()
         }
     }
@@ -304,5 +348,30 @@ class TsvbManager(private val context: Context) {
             Log.e(TAG, "Failed to load bitmap from: $uri", e)
             null
         }
+    }
+
+    private fun centerCropAndResize(bitmap: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
+        val targetRatio = targetWidth.toFloat() / targetHeight.toFloat()
+        val imageRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+
+        // Center-crop to target aspect ratio
+        val cropWidth: Int
+        val cropHeight: Int
+        if (imageRatio > targetRatio) {
+            cropHeight = bitmap.height
+            cropWidth = (bitmap.height * targetRatio).toInt()
+        } else {
+            cropWidth = bitmap.width
+            cropHeight = (bitmap.width / targetRatio).toInt()
+        }
+
+        val xOffset = (bitmap.width - cropWidth) / 2
+        val yOffset = (bitmap.height - cropHeight) / 2
+        val cropped = Bitmap.createBitmap(bitmap, xOffset, yOffset, cropWidth, cropHeight)
+
+        // Scale to exact target dimensions
+        val scaled = Bitmap.createScaledBitmap(cropped, targetWidth, targetHeight, true)
+        if (scaled !== cropped) cropped.recycle()
+        return scaled
     }
 }

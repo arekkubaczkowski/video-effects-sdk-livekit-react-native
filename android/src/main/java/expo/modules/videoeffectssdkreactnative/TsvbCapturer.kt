@@ -2,7 +2,6 @@ package expo.modules.videoeffectssdkreactnative
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.util.Log
 import com.effectssdk.tsvb.pipeline.OnFrameAvailableListener
 import org.webrtc.CameraEnumerator
@@ -44,43 +43,55 @@ class TsvbCapturer(
     private var currentHeight = 720
     private var currentFps = 30
 
-    // Pre-allocated NV21 buffer for frame conversion (reused across frames)
+    // Pre-allocated buffers for frame conversion (reused across frames)
     private var nv21Buffer: ByteArray? = null
+    private var argbBuffer: IntArray? = null
     private var nv21Width = 0
     private var nv21Height = 0
+
+    // Frame dropping: skip frame if previous is still being processed
+    @Volatile
+    private var isProcessingFrame = false
+    private var frameCount = 0
 
     // Frame listener for CameraPipeline output
     private val frameListener = OnFrameAvailableListener { bitmap, timestamp ->
         if (!isPipelineActive) return@OnFrameAvailableListener
-
         val observer = capturerObserver ?: return@OnFrameAvailableListener
 
+        // Drop frame if previous conversion is still in progress (prevents backpressure lag)
+        if (isProcessingFrame) return@OnFrameAvailableListener
+        isProcessingFrame = true
+
         try {
-            // Flip horizontally for front camera
-            val processedBitmap = if (isFrontFacing()) {
-                flipBitmapHorizontally(bitmap)
-            } else {
-                bitmap
+            val width = bitmap.width
+            val height = bitmap.height
+
+            frameCount++
+            if (frameCount <= 3) {
+                Log.d(TAG, "Frame #$frameCount: bitmap=${width}x${height}, capture=${currentWidth}x${currentHeight}")
             }
 
-            val width = processedBitmap.width
-            val height = processedBitmap.height
+            // Report actual output dimensions to manager (for background image sizing)
+            if (width != manager.captureWidth || height != manager.captureHeight) {
+                manager.setCaptureSize(width, height)
+                Log.d(TAG, "Capture size updated: ${width}x${height}")
+            }
+            val flip = isFrontFacing()
 
-            // Reuse or allocate NV21 buffer
             val nv21 = getNv21Buffer(width, height)
-            bitmapToNv21(processedBitmap, nv21, width, height)
+            val argb = getArgbBuffer(width, height)
+            bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+            argbToNv21(argb, nv21, width, height, flip)
 
-            val buffer = NV21Buffer(nv21, width, height) {
-                if (processedBitmap !== bitmap) {
-                    processedBitmap.recycle()
-                }
-            }
-
+            val buffer = NV21Buffer(nv21, width, height, null)
             val frame = VideoFrame(buffer, 0, timestamp * 1_000_000)
             observer.onFrameCaptured(frame)
             frame.release()
         } catch (e: Exception) {
             Log.e(TAG, "Error processing frame", e)
+        } finally {
+            isProcessingFrame = false
         }
     }
 
@@ -195,14 +206,8 @@ class TsvbCapturer(
         }
     }
 
-    private fun flipBitmapHorizontally(source: Bitmap): Bitmap {
-        val matrix = Matrix().apply { preScale(-1f, 1f) }
-        return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, false)
-    }
-
     /**
      * Returns a reusable NV21 byte array for the given dimensions.
-     * Allocates a new one only if dimensions changed.
      */
     private fun getNv21Buffer(width: Int, height: Int): ByteArray {
         if (nv21Buffer == null || nv21Width != width || nv21Height != height) {
@@ -215,20 +220,29 @@ class TsvbCapturer(
     }
 
     /**
-     * Converts ARGB Bitmap to NV21 (YUV420SP) format.
-     * Writes directly into the provided byte array.
+     * Returns a reusable ARGB int array for the given dimensions.
      */
-    private fun bitmapToNv21(bitmap: Bitmap, nv21: ByteArray, width: Int, height: Int) {
-        val argb = IntArray(width * height)
-        bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+    private fun getArgbBuffer(width: Int, height: Int): IntArray {
+        val needed = width * height
+        if (argbBuffer == null || argbBuffer!!.size < needed) {
+            argbBuffer = IntArray(needed)
+        }
+        return argbBuffer!!
+    }
 
+    /**
+     * Converts pre-extracted ARGB pixels to NV21 (YUV420SP) format.
+     * Handles horizontal flip inline (no separate Bitmap allocation).
+     */
+    private fun argbToNv21(argb: IntArray, nv21: ByteArray, width: Int, height: Int, flipH: Boolean) {
         val frameSize = width * height
         var yIndex = 0
         var uvIndex = frameSize
 
         for (j in 0 until height) {
             for (i in 0 until width) {
-                val pixel = argb[j * width + i]
+                val srcX = if (flipH) (width - 1 - i) else i
+                val pixel = argb[j * width + srcX]
                 val r = (pixel shr 16) and 0xFF
                 val g = (pixel shr 8) and 0xFF
                 val b = pixel and 0xFF

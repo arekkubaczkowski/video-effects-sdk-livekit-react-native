@@ -92,8 +92,21 @@ final class TsvbVideoFrameProcessorBridge: NSObject {
         super.init()
     }
 
+    private var lastReportedWidth: Int32 = 0
+    private var lastReportedHeight: Int32 = 0
+    var onFrameSizeChanged: ((Int32, Int32) -> Void)?
+
     /// Called by WebRTC's VideoEffectProcessor on the capture thread.
     @objc func capturer(_ capturer: RTCVideoCapturer, didCaptureVideoFrame frame: RTCVideoFrame) -> RTCVideoFrame {
+        // Report frame dimensions to module (for background image cropping)
+        let w = frame.width
+        let h = frame.height
+        if w != lastReportedWidth || h != lastReportedHeight {
+            lastReportedWidth = w
+            lastReportedHeight = h
+            onFrameSizeChanged?(w, h)
+        }
+
         guard processor.isActive else {
             return frame
         }
@@ -130,8 +143,17 @@ public class VideoEffectsSdkReactNativeModule: Module {
     private var replacementController: (any ReplacementController)?
 
     /// The track ID the processor is currently attached to.
-    /// Used only to detach from old track when attaching to new one.
     private var attachedTrackId: String?
+
+    /// Device orientation reported by JS layer. Used for background image rotation.
+    private var currentOrientation: String = "portrait"
+
+    /// Original (unrotated) background image — kept for re-rotation on orientation change.
+    private var originalBackgroundImage: UIImage?
+
+    /// Last known camera frame dimensions (landscape buffer). Updated by frame processor.
+    private var lastFrameWidth: Int = 0
+    private var lastFrameHeight: Int = 0
 
     /// Serial queue for ALL state mutations and pipeline operations.
     private let controlQueue = DispatchQueue(label: "com.tsvb.control")
@@ -179,6 +201,14 @@ public class VideoEffectsSdkReactNativeModule: Module {
         Function("cleanup") {
             self.doCleanup()
         }
+
+        Function("setDeviceOrientation") { (orientation: String) in
+            let changed = self.currentOrientation != orientation
+            self.currentOrientation = orientation
+            if changed {
+                self.reapplyBackgroundForOrientation()
+            }
+        }
     }
 
     // MARK: - Initialize
@@ -188,9 +218,10 @@ public class VideoEffectsSdkReactNativeModule: Module {
             // If already initialized, just re-attach to new track if needed
             if self.state == .idle || self.state == .active {
                 if self.attachedTrackId != trackId {
-                    self.attachProcessorToTrack(trackId)
+                    let attachResult = self.attachProcessorToTrack(trackId)
+                    return ["success": true, "status": "already_initialized", "attachResult": attachResult]
                 }
-                return ["success": true, "status": "already_initialized"]
+                return ["success": true, "status": "already_initialized", "attachResult": "already_attached"]
             }
 
             guard self.state != .authenticating else {
@@ -225,14 +256,19 @@ public class VideoEffectsSdkReactNativeModule: Module {
                 // Create frame processor (not a singleton — owned by this module instance)
                 let fp = TsvbFrameProcessor(pipeline: pipeline)
                 self.frameProcessor = fp
-                self.processorBridge = TsvbVideoFrameProcessorBridge(processor: fp)
+                let bridge = TsvbVideoFrameProcessorBridge(processor: fp)
+                bridge.onFrameSizeChanged = { [weak self] w, h in
+                    self?.lastFrameWidth = Int(w)
+                    self?.lastFrameHeight = Int(h)
+                }
+                self.processorBridge = bridge
 
                 self.state = .idle
 
                 // Attach to track
-                self.attachProcessorToTrack(trackId)
+                let attachResult = self.attachProcessorToTrack(trackId)
 
-                return ["success": true, "status": "active"]
+                return ["success": true, "status": "active", "attachResult": attachResult]
             } catch {
                 self.state = .error
                 return ["success": false, "error": error.localizedDescription]
@@ -244,14 +280,18 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
     private func doEnableBlur(power: Float) async -> [String: Any] {
         return await onControlQueue {
+            let currentState = "\(self.state)"
+            let hasPipeline = self.pipeline != nil
+            let hasProcessor = self.frameProcessor != nil
+
             guard self.state == .idle || self.state == .active,
                   let pipeline = self.pipeline else {
-                return ["success": false, "error": "SDK not initialized"]
+                return ["success": false, "error": "SDK not initialized", "debug_state": currentState, "debug_hasPipeline": hasPipeline]
             }
 
             let result = pipeline.enableBlurBackground(power: power)
             guard result == .ok else {
-                return ["success": false, "error": "Failed to enable blur"]
+                return ["success": false, "error": "Failed to enable blur, result: \(result)"]
             }
 
             pipeline.disableReplaceBackground()
@@ -262,7 +302,12 @@ public class VideoEffectsSdkReactNativeModule: Module {
             self.state = .active
             self.frameProcessor?.setActive(true)
 
-            return ["success": true]
+            return [
+                "success": true,
+                "debug_processorActive": self.frameProcessor?.isActive ?? false,
+                "debug_hasProcessor": hasProcessor,
+                "debug_attachedTrack": self.attachedTrackId ?? "none",
+            ]
         }
     }
 
@@ -309,14 +354,9 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
             self.replacementController = ctrl
 
-            if let image = backgroundImage, let factory = self.frameFactory {
-                if let data = image.jpegData(compressionQuality: 0.9),
-                   let frame = factory.image(with: data) {
-                    ctrl.background = frame
-                } else if let data = image.pngData(),
-                          let frame = factory.image(with: data) {
-                    ctrl.background = frame
-                }
+            if let image = backgroundImage {
+                self.originalBackgroundImage = image
+                self.applyBackgroundImage(image, to: ctrl)
             }
 
             pipeline.disableBlurBackground()
@@ -339,6 +379,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
             pipeline.disableReplaceBackground()
             self.replaceBackgroundEnabled = false
             self.replacementController = nil
+            self.originalBackgroundImage = nil
 
             if !self.blurEnabled {
                 self.state = .idle
@@ -386,43 +427,46 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
     // MARK: - Track Attachment (via fork's direct API)
 
-    private func attachProcessorToTrack(_ trackId: String) {
-        // Detach from previous track if needed
+    @discardableResult
+    private func attachProcessorToTrack(_ trackId: String) -> String {
         if attachedTrackId != nil && attachedTrackId != trackId {
             detachProcessorFromTrack()
         }
 
-        guard let bridge = processorBridge else { return }
+        guard let bridge = processorBridge else {
+            NSLog("[VideoEffects Native] processorBridge is nil")
+            return "error:no_processor_bridge"
+        }
 
-        // Call WebRTCModule's setVideoFrameProcessor:forTrackId: via ObjC reflection
-        if let webRTCModule = findWebRTCModule() {
-            let selector = NSSelectorFromString("setVideoFrameProcessor:forTrackId:")
-            if webRTCModule.responds(to: selector) {
-                webRTCModule.perform(selector, with: bridge, with: trackId)
+        // Register with ProcessorProvider (static class — works in both bridged and bridgeless mode)
+        if let providerClass = NSClassFromString("ProcessorProvider") as? NSObject.Type {
+            let addSelector = NSSelectorFromString("addProcessor:forName:")
+            if providerClass.responds(to: addSelector) {
+                providerClass.perform(addSelector, with: bridge, with: "tsvb")
                 attachedTrackId = trackId
+                NSLog("[VideoEffects Native] Registered processor with ProcessorProvider, trackId: \(trackId)")
+                return "registered:\(trackId)"
+            } else {
+                NSLog("[VideoEffects Native] ProcessorProvider does not respond to addProcessor:forName:")
+                return "error:no_add_method"
             }
+        } else {
+            NSLog("[VideoEffects Native] ProcessorProvider class not found")
+            return "error:no_processor_provider"
         }
     }
 
     private func detachProcessorFromTrack() {
-        guard let trackId = attachedTrackId else { return }
+        guard attachedTrackId != nil else { return }
 
-        if let webRTCModule = findWebRTCModule() {
-            let selector = NSSelectorFromString("setVideoFrameProcessor:forTrackId:")
-            if webRTCModule.responds(to: selector) {
-                webRTCModule.perform(selector, with: nil, with: trackId)
+        if let providerClass = NSClassFromString("ProcessorProvider") as? NSObject.Type {
+            let removeSelector = NSSelectorFromString("removeProcessor:")
+            if providerClass.responds(to: removeSelector) {
+                providerClass.perform(removeSelector, with: "tsvb")
             }
         }
 
         attachedTrackId = nil
-    }
-
-    private func findWebRTCModule() -> NSObject? {
-        // Find WebRTCModule via RCTBridge
-        guard let bridge = appContext?.reactBridge else { return nil }
-        let selector = NSSelectorFromString("moduleForName:")
-        guard bridge.responds(to: selector) else { return nil }
-        return bridge.perform(selector, with: "WebRTCModule")?.takeUnretainedValue() as? NSObject
     }
 
     // MARK: - Helpers
@@ -432,6 +476,62 @@ public class VideoEffectsSdkReactNativeModule: Module {
             controlQueue.async {
                 continuation.resume(returning: closure())
             }
+        }
+    }
+
+    private func applyBackgroundImage(_ image: UIImage, to controller: any ReplacementController) {
+        let rotated = Self.rotateForCameraPipeline(image, orientation: currentOrientation)
+        guard let factory = self.frameFactory else { return }
+
+        if let data = rotated.jpegData(compressionQuality: 0.9),
+           let frame = factory.image(with: data) {
+            controller.background = frame
+        } else if let data = rotated.pngData(),
+                  let frame = factory.image(with: data) {
+            controller.background = frame
+        }
+    }
+
+    /// Center-crop image to target aspect ratio (like CSS object-fit: cover)
+    private static func centerCrop(_ image: UIImage, toAspectRatio targetRatio: CGFloat) -> UIImage {
+        let imageRatio = image.size.width / image.size.height
+
+        if abs(imageRatio - targetRatio) < 0.01 {
+            return image // Already correct aspect ratio
+        }
+
+        let cropRect: CGRect
+        if imageRatio > targetRatio {
+            // Image is wider — crop sides
+            let newWidth = image.size.height * targetRatio
+            let xOffset = (image.size.width - newWidth) / 2
+            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: image.size.height)
+        } else {
+            // Image is taller — crop top/bottom
+            let newHeight = image.size.width / targetRatio
+            let yOffset = (image.size.height - newHeight) / 2
+            cropRect = CGRect(x: 0, y: yOffset, width: image.size.width, height: newHeight)
+        }
+
+        // Scale cropRect to pixel coordinates
+        let scale = image.scale
+        let pixelRect = CGRect(
+            x: cropRect.origin.x * scale,
+            y: cropRect.origin.y * scale,
+            width: cropRect.size.width * scale,
+            height: cropRect.size.height * scale
+        )
+
+        guard let cgImage = image.cgImage?.cropping(to: pixelRect) else { return image }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: image.imageOrientation)
+    }
+
+    private func reapplyBackgroundForOrientation() {
+        controlQueue.async {
+            guard self.replaceBackgroundEnabled,
+                  let image = self.originalBackgroundImage,
+                  let ctrl = self.replacementController else { return }
+            self.applyBackgroundImage(image, to: ctrl)
         }
     }
 
@@ -447,20 +547,63 @@ public class VideoEffectsSdkReactNativeModule: Module {
     }
 
     private func loadImage(uri: String) async -> UIImage? {
+        var image: UIImage?
+
         if uri.hasPrefix("http://") || uri.hasPrefix("https://"),
            let url = URL(string: uri) {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                return UIImage(data: data)
+                image = UIImage(data: data)
             } catch {
                 return nil
             }
         } else if uri.hasPrefix("file://") {
-            return UIImage(contentsOfFile: String(uri.dropFirst(7)))
+            image = UIImage(contentsOfFile: String(uri.dropFirst(7)))
         } else {
             let name = ((uri as NSString).lastPathComponent as NSString).deletingPathExtension
-            return UIImage(named: name)
+            image = UIImage(named: name)
         }
+
+        return image
+    }
+
+    /// Rotate background image to match the camera pipeline's buffer orientation.
+    /// SDK treats landscape-left as base orientation. Empirically confirmed:
+    /// - portrait:        needs 90° CCW
+    /// - landscape-left:  no rotation needed
+    /// - landscape-right: needs 180°
+    private static func rotateForCameraPipeline(_ image: UIImage, orientation: String) -> UIImage {
+        switch orientation {
+        case "landscape-left":
+            return image
+        case "landscape-right":
+            return rotateImage(image, angle: .pi, swapDimensions: false)
+        default:
+            // portrait
+            return rotateImage(image, angle: -.pi / 2, swapDimensions: true)
+        }
+    }
+
+    private static func rotateImage(_ image: UIImage, angle: CGFloat, swapDimensions: Bool) -> UIImage {
+        let outputSize = swapDimensions
+            ? CGSize(width: image.size.height, height: image.size.width)
+            : image.size
+
+        UIGraphicsBeginImageContextWithOptions(outputSize, false, image.scale)
+        guard let context = UIGraphicsGetCurrentContext() else { return image }
+
+        context.translateBy(x: outputSize.width / 2, y: outputSize.height / 2)
+        context.rotate(by: angle)
+        image.draw(in: CGRect(
+            x: -image.size.width / 2,
+            y: -image.size.height / 2,
+            width: image.size.width,
+            height: image.size.height
+        ))
+
+        let rotated = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return rotated ?? image
     }
 
     private func authErrorMessage(_ status: AuthStatus) -> String {
