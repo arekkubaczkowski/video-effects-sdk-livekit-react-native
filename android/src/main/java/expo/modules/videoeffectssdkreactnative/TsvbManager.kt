@@ -122,8 +122,6 @@ class TsvbManager(private val context: Context) {
                 optionsCache.blurPower = power
                 isBlurEnabled = true
                 isReplaceBackgroundEnabled = false
-                originalBackgroundBitmap?.recycle()
-                originalBackgroundBitmap = null
                 callback(mapOf("success" to true))
             } catch (e: Exception) {
                 callback(mapOf("success" to false, "error" to e.message.orEmpty()))
@@ -144,8 +142,6 @@ class TsvbManager(private val context: Context) {
                 optionsCache.pipelineMode = PipelineMode.NO_EFFECT
                 isBlurEnabled = false
                 isReplaceBackgroundEnabled = false
-                originalBackgroundBitmap?.recycle()
-                originalBackgroundBitmap = null
                 callback(mapOf("success" to true))
             } catch (e: Exception) {
                 callback(mapOf("success" to false, "error" to e.message.orEmpty()))
