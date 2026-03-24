@@ -52,7 +52,6 @@ class TsvbCapturer(
     // Frame dropping: skip frame if previous is still being processed
     @Volatile
     private var isProcessingFrame = false
-    private var frameCount = 0
 
     // Frame listener for CameraPipeline output
     private val frameListener = OnFrameAvailableListener { bitmap, timestamp ->
@@ -66,11 +65,6 @@ class TsvbCapturer(
         try {
             val width = bitmap.width
             val height = bitmap.height
-
-            frameCount++
-            if (frameCount <= 3) {
-                Log.d(TAG, "Frame #$frameCount: bitmap=${width}x${height}, capture=${currentWidth}x${currentHeight}")
-            }
 
             // Report actual output dimensions to manager (for background image sizing)
             if (width != manager.captureWidth || height != manager.captureHeight) {

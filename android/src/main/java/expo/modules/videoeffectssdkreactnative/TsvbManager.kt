@@ -81,12 +81,17 @@ class TsvbManager(private val context: Context) {
             EffectsSDK.initialize(context, customerID) { status ->
                 when (status) {
                     EffectsSDKStatus.ACTIVE -> {
+                        val factoryRegistered: Boolean
                         synchronized(lock) {
                             isInitialized = true
-                            registerCapturerFactory()
+                            factoryRegistered = registerCapturerFactory()
                         }
-                        Log.d(TAG, "Effects SDK initialized successfully")
-                        callback(mapOf("success" to true, "status" to "active"))
+                        Log.d(TAG, "Effects SDK initialized successfully, factory=$factoryRegistered")
+                        callback(mapOf(
+                            "success" to true,
+                            "status" to "active",
+                            "capturerFactoryRegistered" to factoryRegistered,
+                        ))
                     }
                     else -> {
                         Log.e(TAG, "Effects SDK initialization failed: $status")
@@ -117,6 +122,8 @@ class TsvbManager(private val context: Context) {
                 optionsCache.blurPower = power
                 isBlurEnabled = true
                 isReplaceBackgroundEnabled = false
+                originalBackgroundBitmap?.recycle()
+                originalBackgroundBitmap = null
                 callback(mapOf("success" to true))
             } catch (e: Exception) {
                 callback(mapOf("success" to false, "error" to e.message.orEmpty()))
@@ -136,6 +143,9 @@ class TsvbManager(private val context: Context) {
                 pipeline.setMode(PipelineMode.NO_EFFECT)
                 optionsCache.pipelineMode = PipelineMode.NO_EFFECT
                 isBlurEnabled = false
+                isReplaceBackgroundEnabled = false
+                originalBackgroundBitmap?.recycle()
+                originalBackgroundBitmap = null
                 callback(mapOf("success" to true))
             } catch (e: Exception) {
                 callback(mapOf("success" to false, "error" to e.message.orEmpty()))
@@ -259,7 +269,7 @@ class TsvbManager(private val context: Context) {
 
     // MARK: - Capturer Registration (via reflection to avoid compile-time dependency on fork)
 
-    private fun registerCapturerFactory() {
+    private fun registerCapturerFactory(): Boolean {
         try {
             val providerClass = Class.forName("com.oney.WebRTCModule.videoEffects.CapturerProvider")
             val factoryInterface = Class.forName("com.oney.WebRTCModule.videoEffects.CapturerFactoryInterface")
@@ -286,8 +296,10 @@ class TsvbManager(private val context: Context) {
             val setFactoryMethod = providerClass.getMethod("setFactory", factoryInterface)
             setFactoryMethod.invoke(null, proxy)
             Log.d(TAG, "CapturerProvider factory registered")
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register capturer factory — react-native-webrtc fork may not have CapturerProvider", e)
+            return false
         }
     }
 
