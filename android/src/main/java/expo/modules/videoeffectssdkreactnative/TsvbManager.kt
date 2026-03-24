@@ -341,17 +341,8 @@ class TsvbManager(private val context: Context) {
 
     private fun loadBitmapFromUri(uri: String): Bitmap? {
         return try {
-            if (uri.startsWith("http://") || uri.startsWith("https://")) {
-                val connection = URL(uri).openConnection()
-                connection.connect()
-                val inputStream = connection.getInputStream()
-                android.graphics.BitmapFactory.decodeStream(inputStream)
-            } else if (uri.startsWith("file://")) {
-                val path = uri.removePrefix("file://")
-                android.graphics.BitmapFactory.decodeFile(path)
-            } else {
-                null
-            }
+            val path = if (uri.startsWith("file://")) uri.removePrefix("file://") else uri
+            android.graphics.BitmapFactory.decodeFile(path)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load bitmap from: $uri", e)
             null

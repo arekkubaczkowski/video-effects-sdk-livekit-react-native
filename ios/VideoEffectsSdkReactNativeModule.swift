@@ -330,7 +330,10 @@ public class VideoEffectsSdkReactNativeModule: Module {
     }
 
     private func doEnableReplace(assetSource: [String: Any]?) async -> [String: Any] {
+        NSLog("[VideoEffects Native] doEnableReplace called, state=\(state), assetSource=\(String(describing: assetSource))")
+
         guard state == .idle || state == .active, let pipeline = pipeline else {
+            NSLog("[VideoEffects Native] doEnableReplace blocked — state=\(state), pipeline=\(pipeline != nil)")
             return ["success": false, "error": "SDK not initialized"]
         }
 
@@ -338,10 +341,15 @@ public class VideoEffectsSdkReactNativeModule: Module {
         var backgroundImage: UIImage? = nil
 
         if let source = assetSource, let uri = source["uri"] as? String {
+            NSLog("[VideoEffects Native] Loading image from: \(uri)")
             backgroundImage = await loadImage(uri: uri)
             if backgroundImage == nil {
+                NSLog("[VideoEffects Native] Failed to load image")
                 return ["success": false, "error": "Failed to load image from: \(uri)"]
             }
+            NSLog("[VideoEffects Native] Image loaded: \(backgroundImage!.size)")
+        } else {
+            NSLog("[VideoEffects Native] No URI in assetSource")
         }
 
         return await onControlQueue {
@@ -549,20 +557,8 @@ public class VideoEffectsSdkReactNativeModule: Module {
     private func loadImage(uri: String) async -> UIImage? {
         var image: UIImage?
 
-        if uri.hasPrefix("http://") || uri.hasPrefix("https://"),
-           let url = URL(string: uri) {
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                image = UIImage(data: data)
-            } catch {
-                return nil
-            }
-        } else if uri.hasPrefix("file://") {
-            image = UIImage(contentsOfFile: String(uri.dropFirst(7)))
-        } else {
-            let name = ((uri as NSString).lastPathComponent as NSString).deletingPathExtension
-            image = UIImage(named: name)
-        }
+        let path = uri.hasPrefix("file://") ? String(uri.dropFirst(7)) : uri
+        image = UIImage(contentsOfFile: path)
 
         return image
     }
