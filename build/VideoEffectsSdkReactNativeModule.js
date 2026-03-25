@@ -86,6 +86,10 @@ class TsvbVideoEffects {
     setDeviceOrientation(orientation) {
         NativeModule.setDeviceOrientation(orientation);
     }
+    /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
+    setSegmentationPreset(preset) {
+        NativeModule.setSegmentationPreset(preset);
+    }
     cleanup() {
         try {
             NativeModule.cleanup();

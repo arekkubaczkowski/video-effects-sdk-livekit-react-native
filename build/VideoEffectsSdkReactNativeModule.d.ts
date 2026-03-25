@@ -1,4 +1,4 @@
-import type { BlurOptions, DeviceOrientation, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleInterface, ReplaceOptions } from "./VideoEffectsSdkReactNativeModule.types";
+import type { BlurOptions, DeviceOrientation, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleInterface, ReplaceOptions, SegmentationPreset } from "./VideoEffectsSdkReactNativeModule.types";
 declare const NativeModule: NativeModuleInterface;
 declare class TsvbVideoEffects {
     private _state;
@@ -10,6 +10,8 @@ declare class TsvbVideoEffects {
     getState(): EffectsState;
     subscribe(callback: (event: EffectsEvent) => void): () => void;
     setDeviceOrientation(orientation: DeviceOrientation): void;
+    /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
+    setSegmentationPreset(preset: SegmentationPreset): void;
     cleanup(): void;
     /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
     checkEffectsAvailability(): boolean;

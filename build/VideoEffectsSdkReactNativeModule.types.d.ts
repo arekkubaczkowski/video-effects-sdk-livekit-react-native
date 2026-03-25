@@ -36,6 +36,8 @@ export interface InitializationResult {
     error?: string;
 }
 export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
+/** Segmentation quality preset. Only effective on iOS — Android SDK handles this internally. */
+export type SegmentationPreset = "quality" | "balanced";
 export interface NativeModuleInterface {
     initialize(customerID: string, trackId: string): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
@@ -49,6 +51,7 @@ export interface NativeModuleInterface {
     isInitialized(): boolean;
     isEffectsUnavailable(): boolean;
     setDeviceOrientation(orientation: DeviceOrientation): void;
+    setSegmentationPreset(preset: string): void;
     cleanup(): void;
 }
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.types.d.ts.map

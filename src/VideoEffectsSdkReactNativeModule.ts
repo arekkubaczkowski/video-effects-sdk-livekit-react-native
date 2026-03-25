@@ -9,6 +9,7 @@ import type {
   InitializationResult,
   NativeModuleInterface,
   ReplaceOptions,
+  SegmentationPreset,
 } from "./VideoEffectsSdkReactNativeModule.types";
 
 const NativeModule = requireNativeModule(
@@ -109,6 +110,11 @@ class TsvbVideoEffects {
 
   setDeviceOrientation(orientation: DeviceOrientation): void {
     NativeModule.setDeviceOrientation(orientation);
+  }
+
+  /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
+  setSegmentationPreset(preset: SegmentationPreset): void {
+    NativeModule.setSegmentationPreset(preset);
   }
 
   cleanup(): void {

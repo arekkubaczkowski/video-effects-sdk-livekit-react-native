@@ -155,6 +155,9 @@ public class VideoEffectsSdkReactNativeModule: Module {
     private var lastFrameWidth: Int = 0
     private var lastFrameHeight: Int = 0
 
+    /// Segmentation preset — configurable from JS. Applied on next pipeline creation.
+    private var currentSegmentationPreset: SegmentationPreset = .quality
+
     /// Serial queue for ALL state mutations and pipeline operations.
     private let controlQueue = DispatchQueue(label: "com.tsvb.control")
 
@@ -231,6 +234,18 @@ public class VideoEffectsSdkReactNativeModule: Module {
                 self.reapplyBackgroundForOrientation()
             }
         }
+
+        Function("setSegmentationPreset") { (preset: String) in
+            let newPreset: SegmentationPreset = preset == "balanced" ? .balanced : .quality
+            self.currentSegmentationPreset = newPreset
+
+            self.controlQueue.async {
+                guard let pipeline = self.pipeline,
+                      let config = pipeline.copyConfiguration() else { return }
+                config.segmentationPreset = newPreset
+                pipeline.setConfiguration(config)
+            }
+        }
     }
 
     // MARK: - Initialize
@@ -271,7 +286,8 @@ public class VideoEffectsSdkReactNativeModule: Module {
                 self.frameFactory = factory.newFrameFactory()
 
                 if let config = pipeline.copyConfiguration() {
-                    config.segmentationPreset = .quality
+                    config.segmentationPreset = self.currentSegmentationPreset
+                    config.isSegmentationOnNeuralEngineEnabled = true
                     pipeline.setConfiguration(config)
                 }
 

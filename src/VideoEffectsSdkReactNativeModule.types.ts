@@ -38,6 +38,9 @@ export interface InitializationResult {
 
 export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
 
+/** Segmentation quality preset. Only effective on iOS — Android SDK handles this internally. */
+export type SegmentationPreset = "quality" | "balanced";
+
 export interface NativeModuleInterface {
   initialize(
     customerID: string,
@@ -54,6 +57,7 @@ export interface NativeModuleInterface {
   isInitialized(): boolean;
   isEffectsUnavailable(): boolean;
   setDeviceOrientation(orientation: DeviceOrientation): void;
+  setSegmentationPreset(preset: string): void;
   cleanup(): void;
 }
 
