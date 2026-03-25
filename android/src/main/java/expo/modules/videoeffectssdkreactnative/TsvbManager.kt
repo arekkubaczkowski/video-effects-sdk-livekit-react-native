@@ -44,7 +44,7 @@ class TsvbManager(private val context: Context) {
     private var cameraPipeline: CameraPipeline? = null
     private var tsvbCapturer: TsvbCapturer? = null
     private val optionsCache = EffectsSdkOptionsCache()
-    private val imageLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var imageLoadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     // Camera capture dimensions — set from actual frame output
     @Volatile var captureWidth = 0
@@ -364,6 +364,7 @@ class TsvbManager(private val context: Context) {
 
     fun cleanup() {
         imageLoadExecutor.shutdownNow()
+        imageLoadExecutor = Executors.newSingleThreadExecutor()
         synchronized(lock) {
             unregisterCapturerFactory()
             tsvbCapturer?.dispose()
