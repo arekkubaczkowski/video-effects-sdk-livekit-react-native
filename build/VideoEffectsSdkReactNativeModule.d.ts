@@ -11,7 +11,10 @@ declare class TsvbVideoEffects {
     subscribe(callback: (event: EffectsEvent) => void): () => void;
     setDeviceOrientation(orientation: DeviceOrientation): void;
     cleanup(): void;
+    /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
+    checkEffectsAvailability(): boolean;
     private ensureInitialized;
+    private ensureEffectsAvailable;
     private updateState;
     private emitError;
     private emit;

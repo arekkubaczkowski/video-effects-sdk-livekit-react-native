@@ -5,6 +5,7 @@ class TsvbVideoEffects {
         isInitialized: false,
         isReady: false,
         activeEffect: "none",
+        isEffectsUnavailable: false,
         error: null,
     };
     _subscribers = new Set();
@@ -31,6 +32,7 @@ class TsvbVideoEffects {
     }
     async enableBlur(options) {
         this.ensureInitialized();
+        this.ensureEffectsAvailable();
         try {
             const power = options?.power ?? 0.5;
             await NativeModule.enableBlurBackground(power);
@@ -44,6 +46,7 @@ class TsvbVideoEffects {
     }
     async enableReplaceBackground(options) {
         this.ensureInitialized();
+        this.ensureEffectsAvailable();
         try {
             await NativeModule.enableReplaceBackground(options.image);
             this.updateState({ activeEffect: "replace", error: null });
@@ -94,14 +97,33 @@ class TsvbVideoEffects {
             isInitialized: false,
             isReady: false,
             activeEffect: "none",
+            isEffectsUnavailable: false,
             error: null,
         };
         this.emit({ type: "stateChange", state: this.getState() });
     }
     // --- Private ---
+    /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
+    checkEffectsAvailability() {
+        try {
+            const unavailable = NativeModule.isEffectsUnavailable();
+            if (unavailable !== this._state.isEffectsUnavailable) {
+                this.updateState({ isEffectsUnavailable: unavailable });
+            }
+            return unavailable;
+        }
+        catch {
+            return false;
+        }
+    }
     ensureInitialized() {
         if (!this._state.isInitialized) {
             throw new Error("TSVB SDK is not initialized. Call initialize() first.");
+        }
+    }
+    ensureEffectsAvailable() {
+        if (this.checkEffectsAvailability()) {
+            throw new Error("Effects unavailable — camera is running in fallback mode without effects pipeline.");
         }
     }
     updateState(partial) {
@@ -112,14 +134,14 @@ class TsvbVideoEffects {
         this.emit({ type: "error", error, recoverable });
     }
     emit(event) {
-        for (const cb of this._subscribers) {
+        this._subscribers.forEach(cb => {
             try {
                 cb(event);
             }
             catch {
                 // Don't let subscriber errors propagate
             }
-        }
+        });
     }
 }
 export const tsvbVideoEffects = new TsvbVideoEffects();

@@ -18,6 +18,8 @@ export interface EffectsState {
     isInitialized: boolean;
     isReady: boolean;
     activeEffect: EffectType;
+    /** True when Android pipeline failed and camera is using standard capturer. Effects unavailable for this session. */
+    isEffectsUnavailable: boolean;
     error: string | null;
 }
 export type EffectsEvent = {
@@ -45,6 +47,7 @@ export interface NativeModuleInterface {
     isBlurEnabled(): boolean;
     hasVirtualBackground(): boolean;
     isInitialized(): boolean;
+    isEffectsUnavailable(): boolean;
     setDeviceOrientation(orientation: DeviceOrientation): void;
     cleanup(): void;
 }
