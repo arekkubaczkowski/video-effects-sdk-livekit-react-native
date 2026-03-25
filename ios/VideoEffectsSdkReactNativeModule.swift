@@ -186,6 +186,11 @@ public class VideoEffectsSdkReactNativeModule: Module {
             return await self.doDisableReplace()
         }
 
+        Function("setBlurPower") { (power: Double) in
+            guard self.blurEnabled, let pipeline = self.pipeline else { return }
+            pipeline.enableBlurBackground(power: Float(power))
+        }
+
         Function("isInitialized") {
             return self.state == .idle || self.state == .active
         }
@@ -555,12 +560,21 @@ public class VideoEffectsSdkReactNativeModule: Module {
     }
 
     private func loadImage(uri: String) async -> UIImage? {
-        var image: UIImage?
+        if uri.hasPrefix("http://") || uri.hasPrefix("https://"),
+           let url = URL(string: uri) {
+            do {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 10
+                let (data, _) = try await URLSession.shared.data(for: request)
+                return UIImage(data: data)
+            } catch {
+                NSLog("[VideoEffects Native] Failed to download image: \(error)")
+                return nil
+            }
+        }
 
         let path = uri.hasPrefix("file://") ? String(uri.dropFirst(7)) : uri
-        image = UIImage(contentsOfFile: path)
-
-        return image
+        return UIImage(contentsOfFile: path)
     }
 
     /// Rotate background image to match the camera pipeline's buffer orientation.

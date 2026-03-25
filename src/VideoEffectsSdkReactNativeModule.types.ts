@@ -42,6 +42,7 @@ export interface NativeModuleInterface {
     trackId: string,
   ): Promise<InitializationResult>;
   enableBlurBackground(power?: number): Promise<void>;
+  setBlurPower(power: number): void;
   disableBlurBackground(): Promise<void>;
   enableReplaceBackground(
     imagePath?: ImageResolvedAssetSource | { uri: string } | null,

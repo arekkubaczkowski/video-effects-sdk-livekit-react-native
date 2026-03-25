@@ -129,6 +129,15 @@ class TsvbManager(private val context: Context) {
         }
     }
 
+    fun setBlurPower(power: Float) {
+        synchronized(lock) {
+            if (isBlurEnabled) {
+                cameraPipeline?.setBlurPower(power)
+                optionsCache.blurPower = power
+            }
+        }
+    }
+
     fun disableBlurBackground(callback: (Map<String, Any>) -> Unit) {
         synchronized(lock) {
             val pipeline = cameraPipeline
@@ -341,8 +350,16 @@ class TsvbManager(private val context: Context) {
 
     private fun loadBitmapFromUri(uri: String): Bitmap? {
         return try {
-            val path = if (uri.startsWith("file://")) uri.removePrefix("file://") else uri
-            android.graphics.BitmapFactory.decodeFile(path)
+            if (uri.startsWith("http://") || uri.startsWith("https://")) {
+                val connection = URL(uri).openConnection()
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                connection.connect()
+                android.graphics.BitmapFactory.decodeStream(connection.getInputStream())
+            } else {
+                val path = if (uri.startsWith("file://")) uri.removePrefix("file://") else uri
+                android.graphics.BitmapFactory.decodeFile(path)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load bitmap from: $uri", e)
             null

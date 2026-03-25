@@ -48,6 +48,10 @@ class VideoEffectsSdkReactNativeModule : Module() {
             }
         }
 
+        Function("setBlurPower") { power: Double ->
+            tsvbManager.setBlurPower(power.toFloat())
+        }
+
         Function("isBlurEnabled") {
             tsvbManager.isBlurEnabled
         }

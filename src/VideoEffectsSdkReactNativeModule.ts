@@ -63,6 +63,10 @@ class TsvbVideoEffects {
     }
   }
 
+  setBlurPower(power: number): void {
+    NativeModule.setBlurPower(power);
+  }
+
   async enableReplaceBackground(options: ReplaceOptions): Promise<void> {
     this.ensureInitialized();
 
