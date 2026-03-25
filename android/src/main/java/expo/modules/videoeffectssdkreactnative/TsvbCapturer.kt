@@ -34,10 +34,17 @@ class TsvbCapturer(
     }
 
     private var capturerObserver: CapturerObserver? = null
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var context: Context? = null
 
     @Volatile
     private var isPipelineActive = false
+
+    // Fallback: standard camera capturer used if Effects SDK pipeline fails
+    private var fallbackCapturer: CameraVideoCapturer? = null
+    @Volatile
+    var isUsingFallback = false
+        private set
 
     private var currentWidth = 1280
     private var currentHeight = 720
@@ -96,6 +103,7 @@ class TsvbCapturer(
         context: Context?,
         observer: CapturerObserver?
     ) {
+        this.surfaceTextureHelper = surfaceTextureHelper
         this.context = context
         this.capturerObserver = observer
         Log.d(TAG, "Initialized with device: $device")
@@ -106,6 +114,9 @@ class TsvbCapturer(
         currentHeight = height
         currentFps = fps
 
+        // Clean up previous fallback if any
+        stopFallbackCapturer()
+
         Log.d(TAG, "startCapture: ${width}x${height}@${fps}fps, device=$device")
 
         val pipeline = manager.createPipeline(width, height, device)
@@ -113,16 +124,20 @@ class TsvbCapturer(
             pipeline.setOnFrameAvailableListener(frameListener)
             pipeline.startPipeline()
             isPipelineActive = true
+            isUsingFallback = false
             eventsHandler.onCameraOpening(device)
             Log.d(TAG, "Pipeline started")
         } else {
-            Log.e(TAG, "Failed to create pipeline")
+            Log.e(TAG, "Effects SDK pipeline failed — falling back to standard camera")
+            isUsingFallback = true
+            startFallbackCapturer(width, height, fps)
         }
     }
 
     override fun stopCapture() {
         Log.d(TAG, "stopCapture")
         isPipelineActive = false
+        stopFallbackCapturer()
         manager.releasePipeline()
     }
 
@@ -135,8 +150,11 @@ class TsvbCapturer(
     override fun dispose() {
         Log.d(TAG, "dispose")
         isPipelineActive = false
+        fallbackCapturer?.dispose()
+        fallbackCapturer = null
         manager.releasePipeline()
         capturerObserver = null
+        surfaceTextureHelper = null
         context = null
     }
 
@@ -171,6 +189,13 @@ class TsvbCapturer(
 
         Log.d(TAG, "switchCamera to: $deviceName")
 
+        // If using fallback, delegate switch to fallback capturer
+        if (isUsingFallback && fallbackCapturer != null) {
+            fallbackCapturer?.switchCamera(handler, deviceName)
+            device = deviceName
+            return
+        }
+
         isPipelineActive = false
         manager.releasePipeline()
 
@@ -184,11 +209,44 @@ class TsvbCapturer(
             handler?.onCameraSwitchDone(isFrontFacing())
             Log.d(TAG, "Camera switched to: $deviceName")
         } else {
-            handler?.onCameraSwitchError("Failed to create pipeline for $deviceName")
+            Log.e(TAG, "Pipeline failed on switch — falling back to standard camera")
+            isUsingFallback = true
+            startFallbackCapturer(currentWidth, currentHeight, currentFps)
+            handler?.onCameraSwitchDone(isFrontFacing())
         }
     }
 
     fun getCurrentDevice(): String = device
+
+    // MARK: - Fallback
+
+    private fun stopFallbackCapturer() {
+        fallbackCapturer?.stopCapture()
+        fallbackCapturer?.dispose()
+        fallbackCapturer = null
+    }
+
+    /**
+     * If Effects SDK pipeline fails to create, fall back to standard camera capturer.
+     * User gets camera without effects — better than black screen.
+     */
+    private fun startFallbackCapturer(width: Int, height: Int, fps: Int) {
+        try {
+            val capturer = enumerator.createCapturer(device, eventsHandler)
+            if (capturer != null && surfaceTextureHelper != null && context != null) {
+                capturer.initialize(surfaceTextureHelper, context, capturerObserver)
+                capturer.startCapture(width, height, fps)
+                fallbackCapturer = capturer
+                Log.w(TAG, "Fallback capturer started — camera works without effects")
+            } else {
+                Log.e(TAG, "Fallback capturer creation failed — camera unavailable")
+                eventsHandler.onCameraError("Both Effects SDK and fallback camera failed")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallback capturer exception", e)
+            eventsHandler.onCameraError("Fallback camera failed: ${e.message}")
+        }
+    }
 
     // MARK: - Helpers
 

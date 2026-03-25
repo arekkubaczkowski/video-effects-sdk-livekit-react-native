@@ -167,8 +167,15 @@ public class VideoEffectsSdkReactNativeModule: Module {
             return await self.doInitialize(customerID: customerID, trackId: trackId)
         }
 
-        AsyncFunction("enableBlurBackground") { (power: Double?) -> [String: Any] in
-            return await self.doEnableBlur(power: Float(power ?? 0.5))
+        AsyncFunction("enableBlurBackground") { (power: Double?, promise: Promise) in
+            Task {
+                let result = await self.doEnableBlur(power: Float(power ?? 0.5))
+                if result["success"] as? Bool == true {
+                    promise.resolve(result)
+                } else {
+                    promise.reject("EFFECTS_ERROR", result["error"] as? String ?? "Unknown error")
+                }
+            }
         }
 
         AsyncFunction("disableBlurBackground") { () -> [String: Any] in
@@ -178,12 +185,23 @@ public class VideoEffectsSdkReactNativeModule: Module {
         AsyncFunction("enableReplaceBackground") { (assetSource: [String: Any]?, promise: Promise) in
             Task {
                 let result = await self.doEnableReplace(assetSource: assetSource)
-                promise.resolve(result)
+                if result["success"] as? Bool == true {
+                    promise.resolve(result)
+                } else {
+                    promise.reject("EFFECTS_ERROR", result["error"] as? String ?? "Unknown error")
+                }
             }
         }
 
         AsyncFunction("disableReplaceBackground") { () -> [String: Any] in
             return await self.doDisableReplace()
+        }
+
+        Function("setBlurPower") { (power: Double) in
+            self.controlQueue.async {
+                guard self.blurEnabled, let pipeline = self.pipeline else { return }
+                pipeline.enableBlurBackground(power: Float(power))
+            }
         }
 
         Function("isInitialized") {
@@ -196,6 +214,10 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
         Function("hasVirtualBackground") {
             return self.replaceBackgroundEnabled
+        }
+
+        Function("isEffectsUnavailable") {
+            return false // iOS doesn't have fallback mode — effects always available when initialized
         }
 
         Function("cleanup") {
@@ -345,6 +367,11 @@ public class VideoEffectsSdkReactNativeModule: Module {
         }
 
         return await onControlQueue {
+            // Re-check state inside controlQueue — cleanup may have run during image download
+            guard self.state == .idle || self.state == .active, self.pipeline != nil else {
+                return ["success": false, "error": "SDK was cleaned up during image load"]
+            }
+
             var controller: (any ReplacementController)? = nil
             let result = pipeline.enableReplaceBackground(&controller)
 

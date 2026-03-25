@@ -33,6 +33,10 @@ class TsvbManager(private val context: Context) {
     @Volatile var isReplaceBackgroundEnabled = false
         private set
 
+    /** True when CameraPipeline failed and capturer fell back to standard camera. Effects are unavailable for this session. */
+    val isEffectsUnavailable: Boolean
+        get() = tsvbCapturer?.isUsingFallback == true
+
     private val lock = Any()
     private var cameraPipeline: CameraPipeline? = null
     private var tsvbCapturer: TsvbCapturer? = null
@@ -315,6 +319,7 @@ class TsvbManager(private val context: Context) {
         imageLoadExecutor.shutdownNow()
         synchronized(lock) {
             unregisterCapturerFactory()
+            tsvbCapturer?.dispose()
             tsvbCapturer = null
             releasePipeline()
             isInitialized = false

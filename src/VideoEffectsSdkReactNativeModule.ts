@@ -20,6 +20,7 @@ class TsvbVideoEffects {
     isInitialized: false,
     isReady: false,
     activeEffect: "none",
+    isEffectsUnavailable: false,
     error: null,
   };
   private _subscribers = new Set<(event: EffectsEvent) => void>();
@@ -51,6 +52,7 @@ class TsvbVideoEffects {
 
   async enableBlur(options?: BlurOptions): Promise<void> {
     this.ensureInitialized();
+    this.ensureEffectsAvailable();
 
     try {
       const power = options?.power ?? 0.5;
@@ -65,6 +67,7 @@ class TsvbVideoEffects {
 
   async enableReplaceBackground(options: ReplaceOptions): Promise<void> {
     this.ensureInitialized();
+    this.ensureEffectsAvailable();
 
     try {
       await NativeModule.enableReplaceBackground(options.image);
@@ -119,6 +122,7 @@ class TsvbVideoEffects {
       isInitialized: false,
       isReady: false,
       activeEffect: "none",
+      isEffectsUnavailable: false,
       error: null,
     };
     this.emit({ type: "stateChange", state: this.getState() });
@@ -126,9 +130,30 @@ class TsvbVideoEffects {
 
   // --- Private ---
 
+  /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
+  checkEffectsAvailability(): boolean {
+    try {
+      const unavailable = NativeModule.isEffectsUnavailable();
+      if (unavailable !== this._state.isEffectsUnavailable) {
+        this.updateState({ isEffectsUnavailable: unavailable });
+      }
+      return unavailable;
+    } catch {
+      return false;
+    }
+  }
+
   private ensureInitialized(): void {
     if (!this._state.isInitialized) {
       throw new Error("TSVB SDK is not initialized. Call initialize() first.");
+    }
+  }
+
+  private ensureEffectsAvailable(): void {
+    if (this.checkEffectsAvailability()) {
+      throw new Error(
+        "Effects unavailable — camera is running in fallback mode without effects pipeline."
+      );
     }
   }
 

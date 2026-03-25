@@ -26,7 +26,11 @@ class VideoEffectsSdkReactNativeModule : Module() {
         AsyncFunction("enableBlurBackground") { power: Double?, promise: Promise ->
             val blurPower = power ?: 0.5
             tsvbManager.enableBlurBackground(blurPower.toFloat()) { result ->
-                promise.resolve(result)
+                if (result["success"] == true) {
+                    promise.resolve(result)
+                } else {
+                    promise.reject("EFFECTS_ERROR", result["error"] as? String ?: "Unknown error", null)
+                }
             }
         }
 
@@ -38,7 +42,11 @@ class VideoEffectsSdkReactNativeModule : Module() {
 
         AsyncFunction("enableReplaceBackground") { assetSource: Map<String, Any>?, promise: Promise ->
             tsvbManager.enableReplaceBackground(assetSource) { result ->
-                promise.resolve(result)
+                if (result["success"] == true) {
+                    promise.resolve(result)
+                } else {
+                    promise.reject("EFFECTS_ERROR", result["error"] as? String ?: "Unknown error", null)
+                }
             }
         }
 
@@ -58,6 +66,10 @@ class VideoEffectsSdkReactNativeModule : Module() {
 
         Function("isInitialized") {
             tsvbManager.isInitialized
+        }
+
+        Function("isEffectsUnavailable") {
+            tsvbManager.isEffectsUnavailable
         }
 
         Function("cleanup") {
