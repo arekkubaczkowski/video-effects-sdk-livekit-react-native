@@ -119,14 +119,20 @@ class TsvbCapturer(
 
         Log.d(TAG, "startCapture: ${width}x${height}@${fps}fps, device=$device")
 
-        val pipeline = manager.createPipeline(width, height, device)
+        val pipeline = manager.getOrCreatePipeline(width, height, device)
         if (pipeline != null) {
             pipeline.setOnFrameAvailableListener(frameListener)
-            pipeline.startPipeline()
+            // Only call startPipeline on first creation — pipeline stays running across stop/start
+            if (!manager.isPipelineRunning) {
+                pipeline.startPipeline()
+                manager.isPipelineRunning = true
+                Log.d(TAG, "Pipeline started (first time)")
+            } else {
+                Log.d(TAG, "Pipeline already running, reattached listener")
+            }
             isPipelineActive = true
             isUsingFallback = false
             eventsHandler.onCameraOpening(device)
-            Log.d(TAG, "Pipeline started")
         } else {
             Log.e(TAG, "Effects SDK pipeline failed — falling back to standard camera")
             isUsingFallback = true
@@ -138,7 +144,7 @@ class TsvbCapturer(
         Log.d(TAG, "stopCapture")
         isPipelineActive = false
         stopFallbackCapturer()
-        manager.releasePipeline()
+        // Do NOT stop/release pipeline — it stays running. Only frame delivery is paused via isPipelineActive flag.
     }
 
     override fun changeCaptureFormat(width: Int, height: Int, fps: Int) {
@@ -152,7 +158,8 @@ class TsvbCapturer(
         isPipelineActive = false
         fallbackCapturer?.dispose()
         fallbackCapturer = null
-        manager.releasePipeline()
+        // Do NOT release pipeline here — pipeline is owned by TsvbManager and shared across
+        // capturer instances. Only TsvbManager.cleanup() releases it.
         capturerObserver = null
         surfaceTextureHelper = null
         context = null
@@ -187,6 +194,13 @@ class TsvbCapturer(
             return
         }
 
+        // Skip no-op switch to same device
+        if (deviceName == device) {
+            Log.d(TAG, "switchCamera skipped — already on device: $deviceName")
+            handler?.onCameraSwitchDone(isFrontFacing())
+            return
+        }
+
         Log.d(TAG, "switchCamera to: $deviceName")
 
         // If using fallback, delegate switch to fallback capturer
@@ -196,24 +210,10 @@ class TsvbCapturer(
             return
         }
 
-        isPipelineActive = false
-        manager.releasePipeline()
-
         device = deviceName
-
-        val pipeline = manager.createPipeline(currentWidth, currentHeight, device)
-        if (pipeline != null) {
-            pipeline.setOnFrameAvailableListener(frameListener)
-            pipeline.startPipeline()
-            isPipelineActive = true
-            handler?.onCameraSwitchDone(isFrontFacing())
-            Log.d(TAG, "Camera switched to: $deviceName")
-        } else {
-            Log.e(TAG, "Pipeline failed on switch — falling back to standard camera")
-            isUsingFallback = true
-            startFallbackCapturer(currentWidth, currentHeight, currentFps)
-            handler?.onCameraSwitchDone(isFrontFacing())
-        }
+        manager.switchCamera(deviceName)
+        handler?.onCameraSwitchDone(isFrontFacing())
+        Log.d(TAG, "Camera switched to: $deviceName")
     }
 
     fun getCurrentDevice(): String = device

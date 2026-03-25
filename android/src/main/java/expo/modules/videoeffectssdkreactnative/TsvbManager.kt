@@ -37,6 +37,9 @@ class TsvbManager(private val context: Context) {
     val isEffectsUnavailable: Boolean
         get() = tsvbCapturer?.isUsingFallback == true
 
+    /** Whether the pipeline has been started and is currently running. */
+    @Volatile var isPipelineRunning = false
+
     private val lock = Any()
     private var cameraPipeline: CameraPipeline? = null
     private var tsvbCapturer: TsvbCapturer? = null
@@ -219,13 +222,42 @@ class TsvbManager(private val context: Context) {
     }
 
     // MARK: - Pipeline Lifecycle (called by TsvbCapturer)
+    //
+    // Key design: ONE CameraPipeline per session. Created on first startCapture,
+    // reused across stop/start cycles. Only released on dispose/cleanup.
+    // This avoids SIGSEGV crashes from rapid pipeline create/destroy cycles
+    // (SDK's ExternalTexture GL thread doesn't survive rapid recreation).
 
-    fun createPipeline(width: Int, height: Int, cameraName: String): CameraPipeline? {
+    // Last dimensions used to create pipeline — for detecting resolution changes
+    private var pipelineWidth = 0
+    private var pipelineHeight = 0
+
+    /**
+     * Returns existing pipeline or creates a new one if none exists.
+     * If pipeline already exists, it is reused. Resolution changes are applied via setResolution().
+     */
+    fun getOrCreatePipeline(width: Int, height: Int, cameraName: String): CameraPipeline? {
         if (width <= 0 || height <= 0) {
             Log.e(TAG, "Invalid pipeline dimensions: ${width}x${height}")
             return null
         }
         synchronized(lock) {
+            // Reuse existing pipeline
+            val existing = cameraPipeline
+            if (existing != null) {
+                // Update resolution if changed
+                if (width != pipelineWidth || height != pipelineHeight) {
+                    existing.setResolution(Size(width, height))
+                    pipelineWidth = width
+                    pipelineHeight = height
+                    Log.d(TAG, "Reusing pipeline, updated resolution to ${width}x${height}")
+                } else {
+                    Log.d(TAG, "Reusing existing pipeline")
+                }
+                return existing
+            }
+
+            // Create new pipeline
             try {
                 val factory = EffectsSDK.createSDKFactory()
                 val camera = detectCamera(cameraName)
@@ -248,6 +280,9 @@ class TsvbManager(private val context: Context) {
                     camera
                 )
                 cameraPipeline = pipeline
+                pipelineWidth = width
+                pipelineHeight = height
+                Log.d(TAG, "Created new pipeline: ${width}x${height}, camera=$camera")
                 return pipeline
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create pipeline", e)
@@ -256,15 +291,27 @@ class TsvbManager(private val context: Context) {
         }
     }
 
-    fun releasePipeline() {
+    /** Switch camera using SDK's built-in method — no pipeline recreate. */
+    fun switchCamera(cameraName: String) {
         synchronized(lock) {
-            cameraPipeline?.release()
-            cameraPipeline = null
+            val pipeline = cameraPipeline ?: return
+            val camera = detectCamera(cameraName)
+            pipeline.switchCamera(camera)
+            Log.d(TAG, "Pipeline switchCamera to: $camera")
         }
     }
 
-    fun getCurrentPipeline(): CameraPipeline? {
-        return cameraPipeline
+    /** Release pipeline fully — only called from dispose/cleanup. */
+    fun releasePipeline() {
+        synchronized(lock) {
+            if (isPipelineRunning) {
+                cameraPipeline?.stopPipeline()
+                isPipelineRunning = false
+            }
+            cameraPipeline?.release()
+            cameraPipeline = null
+            Log.d(TAG, "Pipeline released")
+        }
     }
 
     // MARK: - Capturer Registration (via reflection to avoid compile-time dependency on fork)
