@@ -360,6 +360,23 @@ class TsvbManager(private val context: Context) {
         }
     }
 
+    // MARK: - Frame Capture
+
+    fun startFrameCapture(intervalMs: Long, onCaptured: (String, Int, Int, Double) -> Unit) {
+        synchronized(lock) {
+            tsvbCapturer?.onFrameCaptured = { filePath, width, height, timestamp ->
+                onCaptured(filePath, width, height, timestamp)
+            }
+            tsvbCapturer?.startFrameCapture(intervalMs)
+        }
+    }
+
+    fun stopFrameCapture() {
+        synchronized(lock) {
+            tsvbCapturer?.stopFrameCapture()
+        }
+    }
+
     // MARK: - Cleanup
 
     fun cleanup() {

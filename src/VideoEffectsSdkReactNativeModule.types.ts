@@ -26,9 +26,21 @@ export interface EffectsState {
   error: string | null;
 }
 
+export interface FrameCaptureEvent {
+  /** Absolute file path to the captured JPEG image */
+  filePath: string;
+  /** Timestamp in milliseconds when the frame was captured */
+  timestamp: number;
+  /** Frame width in pixels */
+  width: number;
+  /** Frame height in pixels */
+  height: number;
+}
+
 export type EffectsEvent =
   | { type: "stateChange"; state: EffectsState }
-  | { type: "error"; error: string; recoverable: boolean };
+  | { type: "error"; error: string; recoverable: boolean }
+  | { type: "frameCaptured"; frame: FrameCaptureEvent };
 
 export interface InitializationResult {
   success: boolean;
@@ -58,6 +70,8 @@ export interface NativeModuleInterface {
   isEffectsUnavailable(): boolean;
   setDeviceOrientation(orientation: DeviceOrientation): void;
   setSegmentationPreset(preset: string): void;
+  startFrameCapture(intervalMs: number): void;
+  stopFrameCapture(): void;
   cleanup(): void;
 }
 

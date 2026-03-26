@@ -10,6 +10,8 @@ import org.webrtc.CapturerObserver
 import org.webrtc.NV21Buffer
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Custom VideoCapturer that uses Effects SDK's CameraPipeline.
@@ -60,6 +62,26 @@ class TsvbCapturer(
     @Volatile
     private var isProcessingFrame = false
 
+    // Frame capture
+    @Volatile
+    var isFrameCaptureEnabled = false
+        private set
+    @Volatile
+    private var captureIntervalMs: Long = 5000
+    @Volatile
+    private var lastCaptureTimeMs: Long = 0
+    var onFrameCaptured: ((filePath: String, width: Int, height: Int, timestamp: Double) -> Unit)? = null
+
+    fun startFrameCapture(intervalMs: Long) {
+        captureIntervalMs = intervalMs
+        lastCaptureTimeMs = 0
+        isFrameCaptureEnabled = true
+    }
+
+    fun stopFrameCapture() {
+        isFrameCaptureEnabled = false
+    }
+
     // Frame listener for CameraPipeline output
     private val frameListener = OnFrameAvailableListener { bitmap, timestamp ->
         if (!isPipelineActive) return@OnFrameAvailableListener
@@ -78,6 +100,16 @@ class TsvbCapturer(
                 manager.setCaptureSize(width, height)
                 Log.d(TAG, "Capture size updated: ${width}x${height}")
             }
+
+            // Periodic frame capture
+            if (isFrameCaptureEnabled) {
+                val nowMs = System.currentTimeMillis()
+                if (lastCaptureTimeMs == 0L || (nowMs - lastCaptureTimeMs) >= captureIntervalMs) {
+                    lastCaptureTimeMs = nowMs
+                    saveBitmapAsJpeg(bitmap, width, height)
+                }
+            }
+
             val flip = isFrontFacing()
 
             val nv21 = getNv21Buffer(width, height)
@@ -94,6 +126,27 @@ class TsvbCapturer(
         } finally {
             isProcessingFrame = false
         }
+    }
+
+    private fun saveBitmapAsJpeg(bitmap: Bitmap, width: Int, height: Int) {
+        // Copy bitmap for async save (original may be recycled by SDK)
+        val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return
+        Thread {
+            try {
+                val timestamp = System.currentTimeMillis().toDouble()
+                val dir = File(context?.cacheDir, "captured_frames")
+                dir.mkdirs()
+                val file = File(dir, "frame_${timestamp.toLong()}.jpg")
+                FileOutputStream(file).use { out ->
+                    copy.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                }
+                copy.recycle()
+                onFrameCaptured?.invoke(file.absolutePath, width, height, timestamp)
+            } catch (e: Exception) {
+                copy.recycle()
+                Log.e(TAG, "Failed to save captured frame", e)
+            }
+        }.start()
     }
 
     // MARK: - CameraVideoCapturer implementation

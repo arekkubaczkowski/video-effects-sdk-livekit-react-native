@@ -1,4 +1,4 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule, EventEmitter, type Subscription } from "expo-modules-core";
 
 import type {
   BlurOptions,
@@ -6,6 +6,7 @@ import type {
   EffectsConfig,
   EffectsEvent,
   EffectsState,
+  FrameCaptureEvent,
   InitializationResult,
   NativeModuleInterface,
   ReplaceOptions,
@@ -16,6 +17,8 @@ const NativeModule = requireNativeModule(
   "VideoEffectsSdkReactNativeModule",
 ) as NativeModuleInterface;
 
+const emitter = new EventEmitter(NativeModule as any);
+
 class TsvbVideoEffects {
   private _state: EffectsState = {
     isInitialized: false,
@@ -25,6 +28,7 @@ class TsvbVideoEffects {
     error: null,
   };
   private _subscribers = new Set<(event: EffectsEvent) => void>();
+  private _frameCaptureSubscription: Subscription | null = null;
 
   async initialize(config: EffectsConfig): Promise<InitializationResult> {
     const { trackId } = config;
@@ -117,7 +121,37 @@ class TsvbVideoEffects {
     NativeModule.setSegmentationPreset(preset);
   }
 
+  /**
+   * Start periodic frame capture. Captured frames are saved as JPEG files
+   * and emitted via the subscriber callback as `frameCaptured` events.
+   * @param intervalMs Capture interval in milliseconds (default: 5000)
+   */
+  startFrameCapture(intervalMs: number = 5000): void {
+    this.ensureInitialized();
+
+    // Subscribe to native events if not already
+    if (!this._frameCaptureSubscription) {
+      this._frameCaptureSubscription = emitter.addListener(
+        "onFrameCaptured",
+        (event: FrameCaptureEvent) => {
+          this.emit({ type: "frameCaptured", frame: event });
+        },
+      );
+    }
+
+    NativeModule.startFrameCapture(intervalMs);
+  }
+
+  /** Stop periodic frame capture. */
+  stopFrameCapture(): void {
+    NativeModule.stopFrameCapture();
+    this._frameCaptureSubscription?.remove();
+    this._frameCaptureSubscription = null;
+  }
+
   cleanup(): void {
+    this.stopFrameCapture();
+
     try {
       NativeModule.cleanup();
     } catch {

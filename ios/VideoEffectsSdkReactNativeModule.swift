@@ -26,6 +26,12 @@ final class TsvbFrameProcessor: NSObject {
     private var lock = os_unfair_lock()
     private var _active: Bool = false
 
+    // Frame capture state
+    private var _captureEnabled: Bool = false
+    private var _captureIntervalMs: Int = 5000
+    private var _lastCaptureTime: UInt64 = 0
+    var onFrameCaptured: ((_ filePath: String, _ width: Int, _ height: Int, _ timestamp: Double) -> Void)?
+
     init(pipeline: Pipeline) {
         self.pipeline = pipeline
         super.init()
@@ -44,6 +50,16 @@ final class TsvbFrameProcessor: NSObject {
         os_unfair_lock_unlock(&lock)
     }
 
+    func setCaptureEnabled(_ enabled: Bool, intervalMs: Int = 5000) {
+        os_unfair_lock_lock(&lock)
+        _captureEnabled = enabled
+        _captureIntervalMs = intervalMs
+        if !enabled {
+            _lastCaptureTime = 0
+        }
+        os_unfair_lock_unlock(&lock)
+    }
+
     func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
         os_unfair_lock_lock(&lock)
         guard _active, let pipeline = pipeline else {
@@ -59,8 +75,25 @@ final class TsvbFrameProcessor: NSObject {
         }
 
         let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+        let processedBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
+
+        // Check if we should capture this frame
+        let shouldCapture = _captureEnabled
+        let intervalMs = _captureIntervalMs
+        let lastCapture = _lastCaptureTime
         os_unfair_lock_unlock(&lock)
-        return result?.toCVPixelBuffer() ?? pixelBuffer
+
+        if shouldCapture {
+            let nowMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
+            if lastCapture == 0 || (nowMs - lastCapture) >= UInt64(intervalMs) {
+                os_unfair_lock_lock(&lock)
+                _lastCaptureTime = nowMs
+                os_unfair_lock_unlock(&lock)
+                self.savePixelBufferAsJpeg(processedBuffer, width: width, height: height)
+            }
+        }
+
+        return processedBuffer
     }
 
     /// Called under external synchronization (module's control queue).
@@ -73,8 +106,41 @@ final class TsvbFrameProcessor: NSObject {
     func teardown() {
         os_unfair_lock_lock(&lock)
         _active = false
+        _captureEnabled = false
         defer { os_unfair_lock_unlock(&lock) }
         pipeline = nil
+    }
+
+    // MARK: - Frame Capture Helpers
+
+    private func savePixelBufferAsJpeg(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let context = CIContext()
+            guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {
+                return
+            }
+
+            let uiImage = UIImage(cgImage: cgImage)
+            guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+                return
+            }
+
+            let timestamp = Date().timeIntervalSince1970 * 1000
+            let fileName = "frame_\(Int(timestamp)).jpg"
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("captured_frames", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let filePath = dir.appendingPathComponent(fileName)
+
+            do {
+                try jpegData.write(to: filePath)
+                self.onFrameCaptured?(filePath.path, width, height, timestamp)
+            } catch {
+                NSLog("[VideoEffects] Failed to save captured frame: \(error)")
+            }
+        }
     }
 }
 
@@ -166,6 +232,8 @@ public class VideoEffectsSdkReactNativeModule: Module {
     public func definition() -> ModuleDefinition {
         Name("VideoEffectsSdkReactNativeModule")
 
+        Events("onFrameCaptured")
+
         AsyncFunction("initialize") { (customerID: String, trackId: String) -> [String: Any] in
             return await self.doInitialize(customerID: customerID, trackId: trackId)
         }
@@ -244,6 +312,26 @@ public class VideoEffectsSdkReactNativeModule: Module {
                       let config = pipeline.copyConfiguration() else { return }
                 config.segmentationPreset = newPreset
                 pipeline.setConfiguration(config)
+            }
+        }
+
+        Function("startFrameCapture") { (intervalMs: Int) in
+            self.controlQueue.async {
+                self.frameProcessor?.onFrameCaptured = { [weak self] filePath, width, height, timestamp in
+                    self?.sendEvent("onFrameCaptured", [
+                        "filePath": filePath,
+                        "timestamp": timestamp,
+                        "width": width,
+                        "height": height,
+                    ])
+                }
+                self.frameProcessor?.setCaptureEnabled(true, intervalMs: intervalMs)
+            }
+        }
+
+        Function("stopFrameCapture") {
+            self.controlQueue.async {
+                self.frameProcessor?.setCaptureEnabled(false)
             }
         }
     }
