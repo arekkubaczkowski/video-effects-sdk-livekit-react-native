@@ -53,6 +53,10 @@ export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right
 /** Segmentation quality preset. Only effective on iOS — Android SDK handles this internally. */
 export type SegmentationPreset = "quality" | "balanced";
 
+export type NativeModuleEventsMap = {
+  onFrameCaptured(event: FrameCaptureEvent): void;
+};
+
 export interface NativeModuleInterface {
   initialize(
     customerID: string,

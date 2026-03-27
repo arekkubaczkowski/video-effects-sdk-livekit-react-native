@@ -22,6 +22,16 @@ export interface EffectsState {
     isEffectsUnavailable: boolean;
     error: string | null;
 }
+export interface FrameCaptureEvent {
+    /** Absolute file path to the captured JPEG image */
+    filePath: string;
+    /** Timestamp in milliseconds when the frame was captured */
+    timestamp: number;
+    /** Frame width in pixels */
+    width: number;
+    /** Frame height in pixels */
+    height: number;
+}
 export type EffectsEvent = {
     type: "stateChange";
     state: EffectsState;
@@ -29,6 +39,9 @@ export type EffectsEvent = {
     type: "error";
     error: string;
     recoverable: boolean;
+} | {
+    type: "frameCaptured";
+    frame: FrameCaptureEvent;
 };
 export interface InitializationResult {
     success: boolean;
@@ -38,6 +51,9 @@ export interface InitializationResult {
 export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
 /** Segmentation quality preset. Only effective on iOS — Android SDK handles this internally. */
 export type SegmentationPreset = "quality" | "balanced";
+export type NativeModuleEventsMap = {
+    onFrameCaptured(event: FrameCaptureEvent): void;
+};
 export interface NativeModuleInterface {
     initialize(customerID: string, trackId: string): Promise<InitializationResult>;
     enableBlurBackground(power?: number): Promise<void>;
@@ -52,6 +68,8 @@ export interface NativeModuleInterface {
     isEffectsUnavailable(): boolean;
     setDeviceOrientation(orientation: DeviceOrientation): void;
     setSegmentationPreset(preset: string): void;
+    startFrameCapture(intervalMs: number): void;
+    stopFrameCapture(): void;
     cleanup(): void;
 }
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.types.d.ts.map

@@ -30,6 +30,8 @@ final class TsvbFrameProcessor: NSObject {
     private var _captureEnabled: Bool = false
     private var _captureIntervalMs: Int = 5000
     private var _lastCaptureTime: UInt64 = 0
+    private var _lastCapturedFilePath: String?
+    private let ciContext = CIContext()
     var onFrameCaptured: ((_ filePath: String, _ width: Int, _ height: Int, _ timestamp: Double) -> Void)?
 
     init(pipeline: Pipeline) {
@@ -73,32 +75,29 @@ final class TsvbFrameProcessor: NSObject {
         let shouldCapture = _captureEnabled
         let intervalMs = _captureIntervalMs
         let lastCapture = _lastCaptureTime
-        let currentPipeline = isActiveNow ? pipeline : nil
-        os_unfair_lock_unlock(&lock)
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         guard width > 0, height > 0 else {
+            os_unfair_lock_unlock(&lock)
             return pixelBuffer
         }
 
-        // Process through effects pipeline if active
         var outputBuffer = pixelBuffer
-        if let pipeline = currentPipeline {
-            os_unfair_lock_lock(&lock)
+        if isActiveNow, let pipeline = pipeline {
             let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
-            os_unfair_lock_unlock(&lock)
             outputBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
         }
 
-        // Capture frame regardless of whether effects are active
+        os_unfair_lock_unlock(&lock)
+
         if shouldCapture {
             let nowMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
             if lastCapture == 0 || (nowMs - lastCapture) >= UInt64(intervalMs) {
                 os_unfair_lock_lock(&lock)
                 _lastCaptureTime = nowMs
                 os_unfair_lock_unlock(&lock)
-                self.savePixelBufferAsJpeg(outputBuffer, width: width, height: height)
+                self.captureFrame(outputBuffer, width: width, height: height)
             }
         }
 
@@ -122,15 +121,20 @@ final class TsvbFrameProcessor: NSObject {
 
     // MARK: - Frame Capture Helpers
 
-    private func savePixelBufferAsJpeg(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
+    private func captureFrame(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let rotated = Self.rotateToDeviceOrientation(ciImage)
+        let extent = rotated.extent
+
+        guard let cgImage = ciContext.createCGImage(rotated, from: extent) else {
+            return
+        }
+
+        let rotatedWidth = Int(extent.width)
+        let rotatedHeight = Int(extent.height)
+
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
-
-            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-            let context = CIContext()
-            guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {
-                return
-            }
 
             let uiImage = UIImage(cgImage: cgImage)
             guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
@@ -143,12 +147,29 @@ final class TsvbFrameProcessor: NSObject {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let filePath = dir.appendingPathComponent(fileName)
 
+            if let prev = self._lastCapturedFilePath {
+                try? FileManager.default.removeItem(atPath: prev)
+            }
+
             do {
                 try jpegData.write(to: filePath)
-                self.onFrameCaptured?(filePath.path, width, height, timestamp)
+                self._lastCapturedFilePath = filePath.path
+                self.onFrameCaptured?(filePath.path, rotatedWidth, rotatedHeight, timestamp)
             } catch {
                 NSLog("[VideoEffects] Failed to save captured frame: \(error)")
             }
+        }
+    }
+
+    private static func rotateToDeviceOrientation(_ image: CIImage) -> CIImage {
+        let deviceOrientation = UIDevice.current.orientation
+        switch deviceOrientation {
+        case .landscapeLeft:
+            return image.oriented(.upMirrored)
+        case .landscapeRight:
+            return image.oriented(.downMirrored)
+        default:
+            return image.oriented(.leftMirrored)
         }
     }
 }
@@ -341,6 +362,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
         Function("stopFrameCapture") {
             self.controlQueue.async {
                 self.frameProcessor?.setCaptureEnabled(false)
+                Self.cleanupCapturedFrames()
             }
         }
     }
@@ -536,6 +558,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
         controlQueue.sync {
             self.frameProcessor?.teardown()
             self.detachProcessorFromTrack()
+            Self.cleanupCapturedFrames()
 
             if let pipeline = self.pipeline {
                 pipeline.disableBlurBackground()
@@ -744,6 +767,14 @@ public class VideoEffectsSdkReactNativeModule: Module {
         let rotated = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
         return rotated ?? image
+    }
+
+    private static func cleanupCapturedFrames() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("captured_frames", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for file in files {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     private func authErrorMessage(_ status: AuthStatus) -> String {

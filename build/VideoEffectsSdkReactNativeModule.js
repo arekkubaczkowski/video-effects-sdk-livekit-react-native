@@ -1,5 +1,5 @@
 import { requireNativeModule } from "expo-modules-core";
-const NativeModule = requireNativeModule("VideoEffectsSdkReactNativeModule");
+const VideoEffectsNativeModule = requireNativeModule("VideoEffectsSdkReactNativeModule");
 class TsvbVideoEffects {
     _state = {
         isInitialized: false,
@@ -9,10 +9,11 @@ class TsvbVideoEffects {
         error: null,
     };
     _subscribers = new Set();
+    _frameCaptureSubscription = null;
     async initialize(config) {
         const { trackId } = config;
         try {
-            const result = await NativeModule.initialize(config.customerID, trackId);
+            const result = await VideoEffectsNativeModule.initialize(config.customerID, trackId);
             if (!result.success) {
                 this.updateState({ error: result.error || "Initialization failed" });
                 throw new Error(result.error || "Initialization failed");
@@ -35,7 +36,7 @@ class TsvbVideoEffects {
         this.ensureEffectsAvailable();
         try {
             const power = options?.power ?? 0.5;
-            await NativeModule.enableBlurBackground(power);
+            await VideoEffectsNativeModule.enableBlurBackground(power);
             this.updateState({ activeEffect: "blur", error: null });
         }
         catch (error) {
@@ -48,7 +49,7 @@ class TsvbVideoEffects {
         this.ensureInitialized();
         this.ensureEffectsAvailable();
         try {
-            await NativeModule.enableReplaceBackground(options.image);
+            await VideoEffectsNativeModule.enableReplaceBackground(options.image);
             this.updateState({ activeEffect: "replace", error: null });
         }
         catch (error) {
@@ -61,10 +62,10 @@ class TsvbVideoEffects {
         this.ensureInitialized();
         try {
             if (this._state.activeEffect === "blur") {
-                await NativeModule.disableBlurBackground();
+                await VideoEffectsNativeModule.disableBlurBackground();
             }
             else if (this._state.activeEffect === "replace") {
-                await NativeModule.disableReplaceBackground();
+                await VideoEffectsNativeModule.disableReplaceBackground();
             }
             this.updateState({ activeEffect: "none", error: null });
         }
@@ -84,15 +85,36 @@ class TsvbVideoEffects {
         };
     }
     setDeviceOrientation(orientation) {
-        NativeModule.setDeviceOrientation(orientation);
+        VideoEffectsNativeModule.setDeviceOrientation(orientation);
     }
     /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
     setSegmentationPreset(preset) {
-        NativeModule.setSegmentationPreset(preset);
+        VideoEffectsNativeModule.setSegmentationPreset(preset);
+    }
+    /**
+     * Start periodic frame capture. Captured frames are saved as JPEG files
+     * and emitted via the subscriber callback as `frameCaptured` events.
+     * @param intervalMs Capture interval in milliseconds (default: 5000)
+     */
+    startFrameCapture(intervalMs = 5000) {
+        this.ensureInitialized();
+        if (!this._frameCaptureSubscription) {
+            this._frameCaptureSubscription = VideoEffectsNativeModule.addListener("onFrameCaptured", (event) => {
+                this.emit({ type: "frameCaptured", frame: event });
+            });
+        }
+        VideoEffectsNativeModule.startFrameCapture(intervalMs);
+    }
+    /** Stop periodic frame capture. */
+    stopFrameCapture() {
+        VideoEffectsNativeModule.stopFrameCapture();
+        this._frameCaptureSubscription?.remove();
+        this._frameCaptureSubscription = null;
     }
     cleanup() {
+        this.stopFrameCapture();
         try {
-            NativeModule.cleanup();
+            VideoEffectsNativeModule.cleanup();
         }
         catch {
             // Ignore cleanup errors
@@ -110,7 +132,7 @@ class TsvbVideoEffects {
     /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
     checkEffectsAvailability() {
         try {
-            const unavailable = NativeModule.isEffectsUnavailable();
+            const unavailable = VideoEffectsNativeModule.isEffectsUnavailable();
             if (unavailable !== this._state.isEffectsUnavailable) {
                 this.updateState({ isEffectsUnavailable: unavailable });
             }
@@ -151,5 +173,5 @@ class TsvbVideoEffects {
 export const tsvbVideoEffects = new TsvbVideoEffects();
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { NativeModule as VideoEffectsSdkReactNativeModule };
+export { VideoEffectsNativeModule as VideoEffectsSdkReactNativeModule };
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.js.map

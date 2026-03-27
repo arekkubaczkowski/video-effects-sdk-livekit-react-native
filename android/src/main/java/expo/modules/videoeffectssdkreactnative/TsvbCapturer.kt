@@ -12,6 +12,7 @@ import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ExecutorService
 
 /**
  * Custom VideoCapturer that uses Effects SDK's CameraPipeline.
@@ -71,15 +72,20 @@ class TsvbCapturer(
     @Volatile
     private var lastCaptureTimeMs: Long = 0
     var onFrameCaptured: ((filePath: String, width: Int, height: Int, timestamp: Double) -> Unit)? = null
+    private var captureExecutor: ExecutorService? = null
+    @Volatile
+    private var lastCapturedFilePath: String? = null
 
-    fun startFrameCapture(intervalMs: Long) {
+    fun startFrameCapture(intervalMs: Long, executor: ExecutorService) {
         captureIntervalMs = intervalMs
         lastCaptureTimeMs = 0
+        captureExecutor = executor
         isFrameCaptureEnabled = true
     }
 
     fun stopFrameCapture() {
         isFrameCaptureEnabled = false
+        captureExecutor = null
     }
 
     // Frame listener for CameraPipeline output
@@ -129,10 +135,12 @@ class TsvbCapturer(
     }
 
     private fun saveBitmapAsJpeg(bitmap: Bitmap, width: Int, height: Int) {
-        // Copy bitmap for async save (original may be recycled by SDK)
         val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return
-        Thread {
+        val executor = captureExecutor ?: return
+        executor.submit {
             try {
+                lastCapturedFilePath?.let { File(it).delete() }
+
                 val timestamp = System.currentTimeMillis().toDouble()
                 val dir = File(context?.cacheDir, "captured_frames")
                 dir.mkdirs()
@@ -141,12 +149,13 @@ class TsvbCapturer(
                     copy.compress(Bitmap.CompressFormat.JPEG, 80, out)
                 }
                 copy.recycle()
+                lastCapturedFilePath = file.absolutePath
                 onFrameCaptured?.invoke(file.absolutePath, width, height, timestamp)
             } catch (e: Exception) {
                 copy.recycle()
                 Log.e(TAG, "Failed to save captured frame", e)
             }
-        }.start()
+        }
     }
 
     // MARK: - CameraVideoCapturer implementation
