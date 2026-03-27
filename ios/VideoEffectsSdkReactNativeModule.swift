@@ -60,40 +60,49 @@ final class TsvbFrameProcessor: NSObject {
         os_unfair_lock_unlock(&lock)
     }
 
+    var isCaptureEnabled: Bool {
+        os_unfair_lock_lock(&lock)
+        let val = _captureEnabled
+        os_unfair_lock_unlock(&lock)
+        return val
+    }
+
     func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
         os_unfair_lock_lock(&lock)
-        guard _active, let pipeline = pipeline else {
-            os_unfair_lock_unlock(&lock)
-            return pixelBuffer
-        }
+        let isActiveNow = _active
+        let shouldCapture = _captureEnabled
+        let intervalMs = _captureIntervalMs
+        let lastCapture = _lastCaptureTime
+        let currentPipeline = isActiveNow ? pipeline : nil
+        os_unfair_lock_unlock(&lock)
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         guard width > 0, height > 0 else {
-            os_unfair_lock_unlock(&lock)
             return pixelBuffer
         }
 
-        let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
-        let processedBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
+        // Process through effects pipeline if active
+        var outputBuffer = pixelBuffer
+        if let pipeline = currentPipeline {
+            os_unfair_lock_lock(&lock)
+            let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+            os_unfair_lock_unlock(&lock)
+            outputBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
+        }
 
-        // Check if we should capture this frame
-        let shouldCapture = _captureEnabled
-        let intervalMs = _captureIntervalMs
-        let lastCapture = _lastCaptureTime
-        os_unfair_lock_unlock(&lock)
-
+        // Capture frame regardless of whether effects are active
         if shouldCapture {
             let nowMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
             if lastCapture == 0 || (nowMs - lastCapture) >= UInt64(intervalMs) {
                 os_unfair_lock_lock(&lock)
                 _lastCaptureTime = nowMs
                 os_unfair_lock_unlock(&lock)
-                self.savePixelBufferAsJpeg(processedBuffer, width: width, height: height)
+                self.savePixelBufferAsJpeg(outputBuffer, width: width, height: height)
             }
         }
 
-        return processedBuffer
+        return outputBuffer
     }
 
     /// Called under external synchronization (module's control queue).
@@ -173,7 +182,7 @@ final class TsvbVideoFrameProcessorBridge: NSObject {
             onFrameSizeChanged?(w, h)
         }
 
-        guard processor.isActive else {
+        guard processor.isActive || processor.isCaptureEnabled else {
             return frame
         }
 
