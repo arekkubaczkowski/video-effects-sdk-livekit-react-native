@@ -48,8 +48,6 @@ export interface InitializationResult {
   error?: string;
 }
 
-export type DeviceOrientation = "portrait" | "landscape-left" | "landscape-right";
-
 /** Segmentation quality preset. Only effective on iOS — Android SDK handles this internally. */
 export type SegmentationPreset = "quality" | "balanced" | "speed" | "lightning";
 
@@ -72,7 +70,6 @@ export interface NativeModuleInterface {
   hasVirtualBackground(): boolean;
   isInitialized(): boolean;
   isEffectsUnavailable(): boolean;
-  setDeviceOrientation(orientation: DeviceOrientation): void;
   setSegmentationPreset(preset: string): void;
   startFrameCapture(intervalMs: number): void;
   stopFrameCapture(): void;

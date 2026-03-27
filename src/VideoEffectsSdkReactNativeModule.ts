@@ -3,7 +3,6 @@ import type { NativeModule } from "expo-modules-core/build/ts-declarations/Nativ
 
 import type {
   BlurOptions,
-  DeviceOrientation,
   EffectsConfig,
   EffectsEvent,
   EffectsState,
@@ -112,10 +111,6 @@ class TsvbVideoEffects {
     };
   }
 
-  setDeviceOrientation(orientation: DeviceOrientation): void {
-    VideoEffectsNativeModule.setDeviceOrientation(orientation);
-  }
-
   /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
   setSegmentationPreset(preset: SegmentationPreset): void {
     VideoEffectsNativeModule.setSegmentationPreset(preset);
@@ -220,4 +215,4 @@ export const tsvbVideoEffects = new TsvbVideoEffects();
 
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsNativeModule as VideoEffectsSdkReactNativeModule };
+export { VideoEffectsNativeModule as TsvbNativeModule };

@@ -84,9 +84,6 @@ class TsvbVideoEffects {
             this._subscribers.delete(callback);
         };
     }
-    setDeviceOrientation(orientation) {
-        VideoEffectsNativeModule.setDeviceOrientation(orientation);
-    }
     /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
     setSegmentationPreset(preset) {
         VideoEffectsNativeModule.setSegmentationPreset(preset);
@@ -173,5 +170,5 @@ class TsvbVideoEffects {
 export const tsvbVideoEffects = new TsvbVideoEffects();
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsNativeModule as VideoEffectsSdkReactNativeModule };
+export { VideoEffectsNativeModule as TsvbNativeModule };
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.js.map

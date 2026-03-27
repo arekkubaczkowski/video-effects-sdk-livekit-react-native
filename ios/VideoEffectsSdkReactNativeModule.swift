@@ -26,8 +26,39 @@ final class TsvbFrameProcessor: NSObject {
     private var lock = os_unfair_lock()
     private var _active: Bool = false
 
-    // Rotation hint for segmentation model
-    private var _rotation: Rotation = ._270
+    private static var _deviceRotationLock = os_unfair_lock()
+    private static var _deviceRotation: Rotation = ._270
+    private static var orientationObserver: NSObjectProtocol?
+
+    static var deviceRotation: Rotation {
+        os_unfair_lock_lock(&_deviceRotationLock)
+        let val = _deviceRotation
+        os_unfair_lock_unlock(&_deviceRotationLock)
+        return val
+    }
+
+    static func startObservingOrientation() {
+        guard orientationObserver == nil else { return }
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        updateDeviceRotation()
+        orientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            updateDeviceRotation()
+        }
+    }
+
+    private static func updateDeviceRotation() {
+        os_unfair_lock_lock(&_deviceRotationLock)
+        switch UIDevice.current.orientation {
+        case .landscapeLeft: _deviceRotation = ._0
+        case .landscapeRight: _deviceRotation = ._180
+        default: _deviceRotation = ._270
+        }
+        os_unfair_lock_unlock(&_deviceRotationLock)
+    }
 
     // Frame capture state
     private var _captureEnabled: Bool = false
@@ -52,12 +83,6 @@ final class TsvbFrameProcessor: NSObject {
     func setActive(_ active: Bool) {
         os_unfair_lock_lock(&lock)
         _active = active
-        os_unfair_lock_unlock(&lock)
-    }
-
-    func setRotation(_ rotation: Rotation) {
-        os_unfair_lock_lock(&lock)
-        _rotation = rotation
         os_unfair_lock_unlock(&lock)
     }
 
@@ -92,9 +117,8 @@ final class TsvbFrameProcessor: NSObject {
             return pixelBuffer
         }
 
-        let rotation = _rotation
-
         var outputBuffer = pixelBuffer
+        let rotation = Self.deviceRotation
         if isActiveNow, let pipeline = pipeline {
             let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, rotation: rotation, error: nil)
             outputBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
@@ -199,21 +223,8 @@ final class TsvbVideoFrameProcessorBridge: NSObject {
         super.init()
     }
 
-    private var lastReportedWidth: Int32 = 0
-    private var lastReportedHeight: Int32 = 0
-    var onFrameSizeChanged: ((Int32, Int32) -> Void)?
-
     /// Called by WebRTC's VideoEffectProcessor on the capture thread.
     @objc func capturer(_ capturer: RTCVideoCapturer, didCaptureVideoFrame frame: RTCVideoFrame) -> RTCVideoFrame {
-        // Report frame dimensions to module (for background image cropping)
-        let w = frame.width
-        let h = frame.height
-        if w != lastReportedWidth || h != lastReportedHeight {
-            lastReportedWidth = w
-            lastReportedHeight = h
-            onFrameSizeChanged?(w, h)
-        }
-
         guard processor.isActive || processor.isCaptureEnabled else {
             return frame
         }
@@ -252,15 +263,8 @@ public class VideoEffectsSdkReactNativeModule: Module {
     /// The track ID the processor is currently attached to.
     private var attachedTrackId: String?
 
-    /// Device orientation reported by JS layer. Used for background image rotation.
-    private var currentOrientation: String = "portrait"
-
-    /// Original (unrotated) background image — kept for re-rotation on orientation change.
+    /// Original background image — kept for re-apply after cleanup.
     private var originalBackgroundImage: UIImage?
-
-    /// Last known camera frame dimensions (landscape buffer). Updated by frame processor.
-    private var lastFrameWidth: Int = 0
-    private var lastFrameHeight: Int = 0
 
     /// Segmentation preset — configurable from JS. Applied on next pipeline creation.
     private var currentSegmentationPreset: SegmentationPreset = .quality
@@ -334,22 +338,6 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
         Function("cleanup") {
             self.doCleanup()
-        }
-
-        Function("setDeviceOrientation") { (orientation: String) in
-            let changed = self.currentOrientation != orientation
-            self.currentOrientation = orientation
-            if changed {
-                self.reapplyBackgroundForOrientation()
-            }
-
-            let rotation: Rotation
-            switch orientation {
-            case "landscape-left": rotation = ._0
-            case "landscape-right": rotation = ._180
-            default: rotation = ._270
-            }
-            self.frameProcessor?.setRotation(rotation)
         }
 
         Function("setSegmentationPreset") { (preset: String) in
@@ -436,14 +424,10 @@ public class VideoEffectsSdkReactNativeModule: Module {
                     pipeline.setConfiguration(config)
                 }
 
-                // Create frame processor (not a singleton — owned by this module instance)
+                TsvbFrameProcessor.startObservingOrientation()
                 let fp = TsvbFrameProcessor(pipeline: pipeline)
                 self.frameProcessor = fp
                 let bridge = TsvbVideoFrameProcessorBridge(processor: fp)
-                bridge.onFrameSizeChanged = { [weak self] w, h in
-                    self?.lastFrameWidth = Int(w)
-                    self?.lastFrameHeight = Int(h)
-                }
                 self.processorBridge = bridge
 
                 self.state = .idle
@@ -463,13 +447,9 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
     private func doEnableBlur(power: Float) async -> [String: Any] {
         return await onControlQueue {
-            let currentState = "\(self.state)"
-            let hasPipeline = self.pipeline != nil
-            let hasProcessor = self.frameProcessor != nil
-
             guard self.state == .idle || self.state == .active,
                   let pipeline = self.pipeline else {
-                return ["success": false, "error": "SDK not initialized", "debug_state": currentState, "debug_hasPipeline": hasPipeline]
+                return ["success": false, "error": "SDK not initialized"]
             }
 
             let result = pipeline.enableBlurBackground(power: power)
@@ -485,12 +465,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
             self.state = .active
             self.frameProcessor?.setActive(true)
 
-            return [
-                "success": true,
-                "debug_processorActive": self.frameProcessor?.isActive ?? false,
-                "debug_hasProcessor": hasProcessor,
-                "debug_attachedTrack": self.attachedTrackId ?? "none",
-            ]
+            return ["success": true]
         }
     }
 
@@ -677,49 +652,6 @@ public class VideoEffectsSdkReactNativeModule: Module {
         } else if let data = image.pngData(),
                   let frame = factory.image(with: data) {
             controller.background = frame
-        }
-    }
-
-    /// Center-crop image to target aspect ratio (like CSS object-fit: cover)
-    private static func centerCrop(_ image: UIImage, toAspectRatio targetRatio: CGFloat) -> UIImage {
-        let imageRatio = image.size.width / image.size.height
-
-        if abs(imageRatio - targetRatio) < 0.01 {
-            return image // Already correct aspect ratio
-        }
-
-        let cropRect: CGRect
-        if imageRatio > targetRatio {
-            // Image is wider — crop sides
-            let newWidth = image.size.height * targetRatio
-            let xOffset = (image.size.width - newWidth) / 2
-            cropRect = CGRect(x: xOffset, y: 0, width: newWidth, height: image.size.height)
-        } else {
-            // Image is taller — crop top/bottom
-            let newHeight = image.size.width / targetRatio
-            let yOffset = (image.size.height - newHeight) / 2
-            cropRect = CGRect(x: 0, y: yOffset, width: image.size.width, height: newHeight)
-        }
-
-        // Scale cropRect to pixel coordinates
-        let scale = image.scale
-        let pixelRect = CGRect(
-            x: cropRect.origin.x * scale,
-            y: cropRect.origin.y * scale,
-            width: cropRect.size.width * scale,
-            height: cropRect.size.height * scale
-        )
-
-        guard let cgImage = image.cgImage?.cropping(to: pixelRect) else { return image }
-        return UIImage(cgImage: cgImage, scale: scale, orientation: image.imageOrientation)
-    }
-
-    private func reapplyBackgroundForOrientation() {
-        controlQueue.async {
-            guard self.replaceBackgroundEnabled,
-                  let image = self.originalBackgroundImage,
-                  let ctrl = self.replacementController else { return }
-            self.applyBackgroundImage(image, to: ctrl)
         }
     }
 

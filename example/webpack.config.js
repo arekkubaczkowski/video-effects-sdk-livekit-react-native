@@ -6,7 +6,7 @@ module.exports = async (env, argv) => {
     {
       ...env,
       babel: {
-        dangerouslyAddModulePathsToTranspile: ['video-effects-sdk-react-native'],
+        dangerouslyAddModulePathsToTranspile: ['tsvb-react-native'],
       },
     },
     argv

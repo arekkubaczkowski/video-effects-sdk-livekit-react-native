@@ -31,7 +31,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 }
 expoAutolinking.useExpoModules()
 
-rootProject.name = 'video-effects-sdk-react-native-example'
+rootProject.name = 'tsvb-react-native-example'
 
 expoAutolinking.useExpoVersionCatalog()
 

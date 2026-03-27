@@ -1,5 +1,5 @@
 import type { NativeModule } from "expo-modules-core/build/ts-declarations/NativeModule";
-import type { BlurOptions, DeviceOrientation, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleEventsMap, NativeModuleInterface, ReplaceOptions, SegmentationPreset } from "./VideoEffectsSdkReactNativeModule.types";
+import type { BlurOptions, EffectsConfig, EffectsEvent, EffectsState, InitializationResult, NativeModuleEventsMap, NativeModuleInterface, ReplaceOptions, SegmentationPreset } from "./VideoEffectsSdkReactNativeModule.types";
 declare const VideoEffectsNativeModule: NativeModule<NativeModuleEventsMap> & NativeModuleInterface;
 declare class TsvbVideoEffects {
     private _state;
@@ -11,7 +11,6 @@ declare class TsvbVideoEffects {
     disableEffects(): Promise<void>;
     getState(): EffectsState;
     subscribe(callback: (event: EffectsEvent) => void): () => void;
-    setDeviceOrientation(orientation: DeviceOrientation): void;
     /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
     setSegmentationPreset(preset: SegmentationPreset): void;
     /**
@@ -34,5 +33,5 @@ declare class TsvbVideoEffects {
 export declare const tsvbVideoEffects: TsvbVideoEffects;
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { VideoEffectsNativeModule as VideoEffectsSdkReactNativeModule };
+export { VideoEffectsNativeModule as TsvbNativeModule };
 //# sourceMappingURL=VideoEffectsSdkReactNativeModule.d.ts.map

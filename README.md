@@ -1,11 +1,11 @@
-# video-effects-sdk-react-native
+# tsvb-react-native
 
 My new module
 
 # API documentation
 
-- [Documentation for the latest stable release](https://docs.expo.dev/versions/latest/sdk/video-effects-sdk-react-native/)
-- [Documentation for the main branch](https://docs.expo.dev/versions/unversioned/sdk/video-effects-sdk-react-native/)
+- [Documentation for the latest stable release](https://docs.expo.dev/versions/latest/sdk/tsvb-react-native/)
+- [Documentation for the main branch](https://docs.expo.dev/versions/unversioned/sdk/tsvb-react-native/)
 
 # Installation in managed Expo projects
 
@@ -18,7 +18,7 @@ For bare React Native projects, you must ensure that you have [installed and con
 ### Add the package to your npm dependencies
 
 ```
-npm install video-effects-sdk-react-native
+npm install tsvb-react-native
 ```
 
 

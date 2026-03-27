@@ -78,10 +78,6 @@ class VideoEffectsSdkReactNativeModule : Module() {
             tsvbManager.cleanup()
         }
 
-        Function("setDeviceOrientation") { _: String ->
-            // No-op on Android — orientation is handled by CameraPipeline internally
-        }
-
         Function("setSegmentationPreset") { _: String ->
             // No-op on Android — SDK uses SegmentationMode (orientation-based), not quality presets
         }

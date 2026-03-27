@@ -19,7 +19,7 @@ config.resolver.nodeModulesPaths = [
 ];
 
 config.resolver.extraNodeModules = {
-  'video-effects-sdk-react-native': '..',
+  'tsvb-react-native': '..',
 };
 
 config.watchFolders = [path.resolve(__dirname, '..')];

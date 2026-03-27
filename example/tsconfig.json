@@ -3,8 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "video-effects-sdk-react-native": ["../src/index"],
-      "video-effects-sdk-react-native/*": ["../src/*"]
+      "tsvb-react-native": ["../src/index"],
+      "tsvb-react-native/*": ["../src/*"]
     }
   }
 }

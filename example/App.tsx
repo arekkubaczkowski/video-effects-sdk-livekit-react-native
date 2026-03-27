@@ -1,5 +1,5 @@
 import { useEvent } from 'expo';
-import VideoEffectsSdkReactNative, { VideoEffectsSdkReactNativeView } from 'video-effects-sdk-react-native';
+import VideoEffectsSdkReactNative, { VideoEffectsSdkReactNativeView } from 'tsvb-react-native';
 import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
 
 export default function App() {

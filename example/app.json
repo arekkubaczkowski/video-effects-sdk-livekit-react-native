@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "video-effects-sdk-react-native-example",
-    "slug": "video-effects-sdk-react-native-example",
+    "name": "tsvb-react-native-example",
+    "slug": "tsvb-react-native-example",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
