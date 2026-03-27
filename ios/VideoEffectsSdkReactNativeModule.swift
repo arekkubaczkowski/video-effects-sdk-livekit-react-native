@@ -669,10 +669,9 @@ public class VideoEffectsSdkReactNativeModule: Module {
     }
 
     private func applyBackgroundImage(_ image: UIImage, to controller: any ReplacementController) {
-        let rotated = Self.rotateForCameraPipeline(image, orientation: currentOrientation)
         guard let factory = self.frameFactory else { return }
 
-        if let data = rotated.jpegData(compressionQuality: 0.9),
+        if let data = image.jpegData(compressionQuality: 0.9),
            let frame = factory.image(with: data) {
             controller.background = frame
         } else if let data = rotated.pngData(),
@@ -756,44 +755,6 @@ public class VideoEffectsSdkReactNativeModule: Module {
         return image
     }
 
-    /// Rotate background image to match the camera pipeline's buffer orientation.
-    /// SDK treats landscape-left as base orientation. Empirically confirmed:
-    /// - portrait:        needs 90° CCW
-    /// - landscape-left:  no rotation needed
-    /// - landscape-right: needs 180°
-    private static func rotateForCameraPipeline(_ image: UIImage, orientation: String) -> UIImage {
-        switch orientation {
-        case "landscape-left":
-            return image
-        case "landscape-right":
-            return rotateImage(image, angle: .pi, swapDimensions: false)
-        default:
-            // portrait
-            return rotateImage(image, angle: -.pi / 2, swapDimensions: true)
-        }
-    }
-
-    private static func rotateImage(_ image: UIImage, angle: CGFloat, swapDimensions: Bool) -> UIImage {
-        let outputSize = swapDimensions
-            ? CGSize(width: image.size.height, height: image.size.width)
-            : image.size
-
-        UIGraphicsBeginImageContextWithOptions(outputSize, false, image.scale)
-        guard let context = UIGraphicsGetCurrentContext() else { return image }
-
-        context.translateBy(x: outputSize.width / 2, y: outputSize.height / 2)
-        context.rotate(by: angle)
-        image.draw(in: CGRect(
-            x: -image.size.width / 2,
-            y: -image.size.height / 2,
-            width: image.size.width,
-            height: image.size.height
-        ))
-
-        let rotated = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return rotated ?? image
-    }
 
     private static func cleanupCapturedFrames() {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("captured_frames", isDirectory: true)
