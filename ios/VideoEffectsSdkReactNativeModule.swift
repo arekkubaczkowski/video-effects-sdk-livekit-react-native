@@ -674,7 +674,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
         if let data = image.jpegData(compressionQuality: 0.9),
            let frame = factory.image(with: data) {
             controller.background = frame
-        } else if let data = rotated.pngData(),
+        } else if let data = image.pngData(),
                   let frame = factory.image(with: data) {
             controller.background = frame
         }
