@@ -26,6 +26,9 @@ final class TsvbFrameProcessor: NSObject {
     private var lock = os_unfair_lock()
     private var _active: Bool = false
 
+    // Rotation hint for segmentation model
+    private var _rotation: Rotation = ._270
+
     // Frame capture state
     private var _captureEnabled: Bool = false
     private var _captureIntervalMs: Int = 5000
@@ -49,6 +52,12 @@ final class TsvbFrameProcessor: NSObject {
     func setActive(_ active: Bool) {
         os_unfair_lock_lock(&lock)
         _active = active
+        os_unfair_lock_unlock(&lock)
+    }
+
+    func setRotation(_ rotation: Rotation) {
+        os_unfair_lock_lock(&lock)
+        _rotation = rotation
         os_unfair_lock_unlock(&lock)
     }
 
@@ -83,9 +92,11 @@ final class TsvbFrameProcessor: NSObject {
             return pixelBuffer
         }
 
+        let rotation = _rotation
+
         var outputBuffer = pixelBuffer
         if isActiveNow, let pipeline = pipeline {
-            let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+            let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, rotation: rotation, error: nil)
             outputBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
         }
 
@@ -331,10 +342,24 @@ public class VideoEffectsSdkReactNativeModule: Module {
             if changed {
                 self.reapplyBackgroundForOrientation()
             }
+
+            let rotation: Rotation
+            switch orientation {
+            case "landscape-left": rotation = ._0
+            case "landscape-right": rotation = ._180
+            default: rotation = ._270
+            }
+            self.frameProcessor?.setRotation(rotation)
         }
 
         Function("setSegmentationPreset") { (preset: String) in
-            let newPreset: SegmentationPreset = preset == "balanced" ? .balanced : .quality
+            let newPreset: SegmentationPreset
+            switch preset {
+            case "balanced": newPreset = .balanced
+            case "speed": newPreset = .speed
+            case "lightning": newPreset = .lightning
+            default: newPreset = .quality
+            }
             self.currentSegmentationPreset = newPreset
 
             self.controlQueue.async {
@@ -407,6 +432,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
                 if let config = pipeline.copyConfiguration() {
                     config.segmentationPreset = self.currentSegmentationPreset
                     config.isSegmentationOnNeuralEngineEnabled = true
+                    config.backend = .GPU
                     pipeline.setConfiguration(config)
                 }
 
