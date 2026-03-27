@@ -17,6 +17,8 @@ class VideoEffectsSdkReactNativeModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("VideoEffectsSdkReactNativeModule")
 
+        Events("onFrameCaptured")
+
         AsyncFunction("initialize") { customerID: String, trackId: String, promise: Promise ->
             tsvbManager.initialize(customerID, trackId) { result ->
                 promise.resolve(result)
@@ -82,6 +84,21 @@ class VideoEffectsSdkReactNativeModule : Module() {
 
         Function("setSegmentationPreset") { _: String ->
             // No-op on Android — SDK uses SegmentationMode (orientation-based), not quality presets
+        }
+
+        Function("startFrameCapture") { intervalMs: Int ->
+            tsvbManager.startFrameCapture(intervalMs.toLong()) { filePath, width, height, timestamp ->
+                sendEvent("onFrameCaptured", mapOf(
+                    "filePath" to filePath,
+                    "timestamp" to timestamp,
+                    "width" to width,
+                    "height" to height,
+                ))
+            }
+        }
+
+        Function("stopFrameCapture") {
+            tsvbManager.stopFrameCapture()
         }
     }
 }

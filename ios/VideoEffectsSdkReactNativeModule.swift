@@ -26,6 +26,17 @@ final class TsvbFrameProcessor: NSObject {
     private var lock = os_unfair_lock()
     private var _active: Bool = false
 
+    // Rotation hint for segmentation model
+    private var _rotation: Rotation = ._270
+
+    // Frame capture state
+    private var _captureEnabled: Bool = false
+    private var _captureIntervalMs: Int = 5000
+    private var _lastCaptureTime: UInt64 = 0
+    private var _lastCapturedFilePath: String?
+    private let ciContext = CIContext()
+    var onFrameCaptured: ((_ filePath: String, _ width: Int, _ height: Int, _ timestamp: Double) -> Void)?
+
     init(pipeline: Pipeline) {
         self.pipeline = pipeline
         super.init()
@@ -44,12 +55,35 @@ final class TsvbFrameProcessor: NSObject {
         os_unfair_lock_unlock(&lock)
     }
 
+    func setRotation(_ rotation: Rotation) {
+        os_unfair_lock_lock(&lock)
+        _rotation = rotation
+        os_unfair_lock_unlock(&lock)
+    }
+
+    func setCaptureEnabled(_ enabled: Bool, intervalMs: Int = 5000) {
+        os_unfair_lock_lock(&lock)
+        _captureEnabled = enabled
+        _captureIntervalMs = intervalMs
+        if !enabled {
+            _lastCaptureTime = 0
+        }
+        os_unfair_lock_unlock(&lock)
+    }
+
+    var isCaptureEnabled: Bool {
+        os_unfair_lock_lock(&lock)
+        let val = _captureEnabled
+        os_unfair_lock_unlock(&lock)
+        return val
+    }
+
     func processFrame(_ pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
         os_unfair_lock_lock(&lock)
-        guard _active, let pipeline = pipeline else {
-            os_unfair_lock_unlock(&lock)
-            return pixelBuffer
-        }
+        let isActiveNow = _active
+        let shouldCapture = _captureEnabled
+        let intervalMs = _captureIntervalMs
+        let lastCapture = _lastCaptureTime
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
@@ -58,9 +92,27 @@ final class TsvbFrameProcessor: NSObject {
             return pixelBuffer
         }
 
-        let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, error: nil)
+        let rotation = _rotation
+
+        var outputBuffer = pixelBuffer
+        if isActiveNow, let pipeline = pipeline {
+            let result = pipeline.process(pixelBuffer: pixelBuffer, metalCompatible: true, rotation: rotation, error: nil)
+            outputBuffer = result?.toCVPixelBuffer() ?? pixelBuffer
+        }
+
         os_unfair_lock_unlock(&lock)
-        return result?.toCVPixelBuffer() ?? pixelBuffer
+
+        if shouldCapture {
+            let nowMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
+            if lastCapture == 0 || (nowMs - lastCapture) >= UInt64(intervalMs) {
+                os_unfair_lock_lock(&lock)
+                _lastCaptureTime = nowMs
+                os_unfair_lock_unlock(&lock)
+                self.captureFrame(outputBuffer, width: width, height: height)
+            }
+        }
+
+        return outputBuffer
     }
 
     /// Called under external synchronization (module's control queue).
@@ -73,8 +125,63 @@ final class TsvbFrameProcessor: NSObject {
     func teardown() {
         os_unfair_lock_lock(&lock)
         _active = false
+        _captureEnabled = false
         defer { os_unfair_lock_unlock(&lock) }
         pipeline = nil
+    }
+
+    // MARK: - Frame Capture Helpers
+
+    private func captureFrame(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int) {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let rotated = Self.rotateToDeviceOrientation(ciImage)
+        let extent = rotated.extent
+
+        guard let cgImage = ciContext.createCGImage(rotated, from: extent) else {
+            return
+        }
+
+        let rotatedWidth = Int(extent.width)
+        let rotatedHeight = Int(extent.height)
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+
+            let uiImage = UIImage(cgImage: cgImage)
+            guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+                return
+            }
+
+            let timestamp = Date().timeIntervalSince1970 * 1000
+            let fileName = "frame_\(Int(timestamp)).jpg"
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("captured_frames", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let filePath = dir.appendingPathComponent(fileName)
+
+            if let prev = self._lastCapturedFilePath {
+                try? FileManager.default.removeItem(atPath: prev)
+            }
+
+            do {
+                try jpegData.write(to: filePath)
+                self._lastCapturedFilePath = filePath.path
+                self.onFrameCaptured?(filePath.path, rotatedWidth, rotatedHeight, timestamp)
+            } catch {
+                NSLog("[VideoEffects] Failed to save captured frame: \(error)")
+            }
+        }
+    }
+
+    private static func rotateToDeviceOrientation(_ image: CIImage) -> CIImage {
+        let deviceOrientation = UIDevice.current.orientation
+        switch deviceOrientation {
+        case .landscapeLeft:
+            return image.oriented(.upMirrored)
+        case .landscapeRight:
+            return image.oriented(.downMirrored)
+        default:
+            return image.oriented(.leftMirrored)
+        }
     }
 }
 
@@ -107,7 +214,7 @@ final class TsvbVideoFrameProcessorBridge: NSObject {
             onFrameSizeChanged?(w, h)
         }
 
-        guard processor.isActive else {
+        guard processor.isActive || processor.isCaptureEnabled else {
             return frame
         }
 
@@ -165,6 +272,8 @@ public class VideoEffectsSdkReactNativeModule: Module {
 
     public func definition() -> ModuleDefinition {
         Name("VideoEffectsSdkReactNativeModule")
+
+        Events("onFrameCaptured")
 
         AsyncFunction("initialize") { (customerID: String, trackId: String) -> [String: Any] in
             return await self.doInitialize(customerID: customerID, trackId: trackId)
@@ -233,10 +342,24 @@ public class VideoEffectsSdkReactNativeModule: Module {
             if changed {
                 self.reapplyBackgroundForOrientation()
             }
+
+            let rotation: Rotation
+            switch orientation {
+            case "landscape-left": rotation = ._0
+            case "landscape-right": rotation = ._180
+            default: rotation = ._270
+            }
+            self.frameProcessor?.setRotation(rotation)
         }
 
         Function("setSegmentationPreset") { (preset: String) in
-            let newPreset: SegmentationPreset = preset == "balanced" ? .balanced : .quality
+            let newPreset: SegmentationPreset
+            switch preset {
+            case "balanced": newPreset = .balanced
+            case "speed": newPreset = .speed
+            case "lightning": newPreset = .lightning
+            default: newPreset = .quality
+            }
             self.currentSegmentationPreset = newPreset
 
             self.controlQueue.async {
@@ -244,6 +367,27 @@ public class VideoEffectsSdkReactNativeModule: Module {
                       let config = pipeline.copyConfiguration() else { return }
                 config.segmentationPreset = newPreset
                 pipeline.setConfiguration(config)
+            }
+        }
+
+        Function("startFrameCapture") { (intervalMs: Int) in
+            self.controlQueue.async {
+                self.frameProcessor?.onFrameCaptured = { [weak self] filePath, width, height, timestamp in
+                    self?.sendEvent("onFrameCaptured", [
+                        "filePath": filePath,
+                        "timestamp": timestamp,
+                        "width": width,
+                        "height": height,
+                    ])
+                }
+                self.frameProcessor?.setCaptureEnabled(true, intervalMs: intervalMs)
+            }
+        }
+
+        Function("stopFrameCapture") {
+            self.controlQueue.async {
+                self.frameProcessor?.setCaptureEnabled(false)
+                Self.cleanupCapturedFrames()
             }
         }
     }
@@ -288,6 +432,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
                 if let config = pipeline.copyConfiguration() {
                     config.segmentationPreset = self.currentSegmentationPreset
                     config.isSegmentationOnNeuralEngineEnabled = true
+                    config.backend = .GPU
                     pipeline.setConfiguration(config)
                 }
 
@@ -439,6 +584,7 @@ public class VideoEffectsSdkReactNativeModule: Module {
         controlQueue.sync {
             self.frameProcessor?.teardown()
             self.detachProcessorFromTrack()
+            Self.cleanupCapturedFrames()
 
             if let pipeline = self.pipeline {
                 pipeline.disableBlurBackground()
@@ -523,10 +669,9 @@ public class VideoEffectsSdkReactNativeModule: Module {
     }
 
     private func applyBackgroundImage(_ image: UIImage, to controller: any ReplacementController) {
-        let rotated = Self.rotateForCameraPipeline(image, orientation: currentOrientation)
         guard let factory = self.frameFactory else { return }
 
-        if let data = rotated.jpegData(compressionQuality: 0.9),
+        if let data = image.jpegData(compressionQuality: 0.9),
            let frame = factory.image(with: data) {
             controller.background = frame
         } else if let data = rotated.pngData(),
@@ -610,43 +755,13 @@ public class VideoEffectsSdkReactNativeModule: Module {
         return image
     }
 
-    /// Rotate background image to match the camera pipeline's buffer orientation.
-    /// SDK treats landscape-left as base orientation. Empirically confirmed:
-    /// - portrait:        needs 90° CCW
-    /// - landscape-left:  no rotation needed
-    /// - landscape-right: needs 180°
-    private static func rotateForCameraPipeline(_ image: UIImage, orientation: String) -> UIImage {
-        switch orientation {
-        case "landscape-left":
-            return image
-        case "landscape-right":
-            return rotateImage(image, angle: .pi, swapDimensions: false)
-        default:
-            // portrait
-            return rotateImage(image, angle: -.pi / 2, swapDimensions: true)
+
+    private static func cleanupCapturedFrames() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("captured_frames", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for file in files {
+            try? FileManager.default.removeItem(at: file)
         }
-    }
-
-    private static func rotateImage(_ image: UIImage, angle: CGFloat, swapDimensions: Bool) -> UIImage {
-        let outputSize = swapDimensions
-            ? CGSize(width: image.size.height, height: image.size.width)
-            : image.size
-
-        UIGraphicsBeginImageContextWithOptions(outputSize, false, image.scale)
-        guard let context = UIGraphicsGetCurrentContext() else { return image }
-
-        context.translateBy(x: outputSize.width / 2, y: outputSize.height / 2)
-        context.rotate(by: angle)
-        image.draw(in: CGRect(
-            x: -image.size.width / 2,
-            y: -image.size.height / 2,
-            width: image.size.width,
-            height: image.size.height
-        ))
-
-        let rotated = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return rotated ?? image
     }
 
     private func authErrorMessage(_ status: AuthStatus) -> String {

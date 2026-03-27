@@ -11,6 +11,7 @@ import com.effectssdk.tsvb.pipeline.CameraPipeline
 import com.effectssdk.tsvb.pipeline.ColorCorrectionMode
 import com.effectssdk.tsvb.pipeline.PipelineMode
 import com.effectssdk.tsvb.pipeline.SegmentationMode
+import java.io.File
 import java.net.URL
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -334,6 +335,7 @@ class TsvbManager(private val context: Context) {
                     Log.d(TAG, "CapturerProvider creating TsvbCapturer for: $cameraName")
                     val capturer = TsvbCapturer(cameraName, eventsHandler, enumerator, this)
                     tsvbCapturer = capturer
+                    applyFrameCaptureState(capturer)
                     capturer
                 } else {
                     null
@@ -360,12 +362,65 @@ class TsvbManager(private val context: Context) {
         }
     }
 
+    // MARK: - Frame Capture
+
+    private var frameCaptureIntervalMs: Long = 0
+    private var frameCaptureCallback: ((String, Int, Int, Double) -> Unit)? = null
+    private var frameCaptureExecutor: ExecutorService? = null
+
+    fun startFrameCapture(intervalMs: Long, onCaptured: (String, Int, Int, Double) -> Unit) {
+        synchronized(lock) {
+            frameCaptureIntervalMs = intervalMs
+            frameCaptureCallback = onCaptured
+            if (frameCaptureExecutor == null) {
+                frameCaptureExecutor = Executors.newSingleThreadExecutor()
+            }
+            applyFrameCaptureState(tsvbCapturer)
+        }
+    }
+
+    fun stopFrameCapture() {
+        synchronized(lock) {
+            tsvbCapturer?.stopFrameCapture()
+            frameCaptureCallback = null
+            frameCaptureIntervalMs = 0
+            frameCaptureExecutor?.shutdownNow()
+            frameCaptureExecutor = null
+            cleanupCapturedFrames()
+        }
+    }
+
+    internal fun applyFrameCaptureState(capturer: TsvbCapturer?) {
+        val callback = frameCaptureCallback ?: return
+        val executor = frameCaptureExecutor ?: return
+        capturer?.onFrameCaptured = { filePath, width, height, timestamp ->
+            callback(filePath, width, height, timestamp)
+        }
+        capturer?.startFrameCapture(frameCaptureIntervalMs, executor)
+    }
+
+    private fun cleanupCapturedFrames() {
+        try {
+            val dir = File(context.cacheDir, "captured_frames")
+            if (dir.exists()) {
+                dir.listFiles()?.forEach { it.delete() }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cleanup captured frames", e)
+        }
+    }
+
     // MARK: - Cleanup
 
     fun cleanup() {
         imageLoadExecutor.shutdownNow()
         imageLoadExecutor = Executors.newSingleThreadExecutor()
         synchronized(lock) {
+            frameCaptureCallback = null
+            frameCaptureIntervalMs = 0
+            frameCaptureExecutor?.shutdownNow()
+            frameCaptureExecutor = null
+            cleanupCapturedFrames()
             unregisterCapturerFactory()
             tsvbCapturer?.dispose()
             tsvbCapturer = null

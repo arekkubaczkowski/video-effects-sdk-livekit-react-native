@@ -1,4 +1,5 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule, type EventSubscription } from "expo-modules-core";
+import type { NativeModule } from "expo-modules-core/build/ts-declarations/NativeModule";
 
 import type {
   BlurOptions,
@@ -6,15 +7,17 @@ import type {
   EffectsConfig,
   EffectsEvent,
   EffectsState,
+  FrameCaptureEvent,
   InitializationResult,
+  NativeModuleEventsMap,
   NativeModuleInterface,
   ReplaceOptions,
   SegmentationPreset,
 } from "./VideoEffectsSdkReactNativeModule.types";
 
-const NativeModule = requireNativeModule(
-  "VideoEffectsSdkReactNativeModule",
-) as NativeModuleInterface;
+const VideoEffectsNativeModule = requireNativeModule<
+  NativeModule<NativeModuleEventsMap> & NativeModuleInterface
+>("VideoEffectsSdkReactNativeModule");
 
 class TsvbVideoEffects {
   private _state: EffectsState = {
@@ -25,12 +28,13 @@ class TsvbVideoEffects {
     error: null,
   };
   private _subscribers = new Set<(event: EffectsEvent) => void>();
+  private _frameCaptureSubscription: EventSubscription | null = null;
 
   async initialize(config: EffectsConfig): Promise<InitializationResult> {
     const { trackId } = config;
 
     try {
-      const result = await NativeModule.initialize(config.customerID, trackId);
+      const result = await VideoEffectsNativeModule.initialize(config.customerID, trackId);
 
       if (!result.success) {
         this.updateState({ error: result.error || "Initialization failed" });
@@ -57,7 +61,7 @@ class TsvbVideoEffects {
 
     try {
       const power = options?.power ?? 0.5;
-      await NativeModule.enableBlurBackground(power);
+      await VideoEffectsNativeModule.enableBlurBackground(power);
       this.updateState({ activeEffect: "blur", error: null });
     } catch (error) {
       const msg = `Failed to enable blur: ${error}`;
@@ -71,7 +75,7 @@ class TsvbVideoEffects {
     this.ensureEffectsAvailable();
 
     try {
-      await NativeModule.enableReplaceBackground(options.image);
+      await VideoEffectsNativeModule.enableReplaceBackground(options.image);
       this.updateState({ activeEffect: "replace", error: null });
     } catch (error) {
       const msg = `Failed to enable background replacement: ${error}`;
@@ -85,9 +89,9 @@ class TsvbVideoEffects {
 
     try {
       if (this._state.activeEffect === "blur") {
-        await NativeModule.disableBlurBackground();
+        await VideoEffectsNativeModule.disableBlurBackground();
       } else if (this._state.activeEffect === "replace") {
-        await NativeModule.disableReplaceBackground();
+        await VideoEffectsNativeModule.disableReplaceBackground();
       }
       this.updateState({ activeEffect: "none", error: null });
     } catch (error) {
@@ -109,17 +113,46 @@ class TsvbVideoEffects {
   }
 
   setDeviceOrientation(orientation: DeviceOrientation): void {
-    NativeModule.setDeviceOrientation(orientation);
+    VideoEffectsNativeModule.setDeviceOrientation(orientation);
   }
 
   /** Set segmentation quality preset. Only effective on iOS — Android handles this internally. */
   setSegmentationPreset(preset: SegmentationPreset): void {
-    NativeModule.setSegmentationPreset(preset);
+    VideoEffectsNativeModule.setSegmentationPreset(preset);
+  }
+
+  /**
+   * Start periodic frame capture. Captured frames are saved as JPEG files
+   * and emitted via the subscriber callback as `frameCaptured` events.
+   * @param intervalMs Capture interval in milliseconds (default: 5000)
+   */
+  startFrameCapture(intervalMs: number = 5000): void {
+    this.ensureInitialized();
+
+    if (!this._frameCaptureSubscription) {
+      this._frameCaptureSubscription = VideoEffectsNativeModule.addListener(
+        "onFrameCaptured",
+        (event: FrameCaptureEvent) => {
+          this.emit({ type: "frameCaptured", frame: event });
+        },
+      );
+    }
+
+    VideoEffectsNativeModule.startFrameCapture(intervalMs);
+  }
+
+  /** Stop periodic frame capture. */
+  stopFrameCapture(): void {
+    VideoEffectsNativeModule.stopFrameCapture();
+    this._frameCaptureSubscription?.remove();
+    this._frameCaptureSubscription = null;
   }
 
   cleanup(): void {
+    this.stopFrameCapture();
+
     try {
-      NativeModule.cleanup();
+      VideoEffectsNativeModule.cleanup();
     } catch {
       // Ignore cleanup errors
     }
@@ -139,7 +172,7 @@ class TsvbVideoEffects {
   /** Query native for fallback state and update local state. Returns true if effects are unavailable. */
   checkEffectsAvailability(): boolean {
     try {
-      const unavailable = NativeModule.isEffectsUnavailable();
+      const unavailable = VideoEffectsNativeModule.isEffectsUnavailable();
       if (unavailable !== this._state.isEffectsUnavailable) {
         this.updateState({ isEffectsUnavailable: unavailable });
       }
@@ -187,4 +220,4 @@ export const tsvbVideoEffects = new TsvbVideoEffects();
 
 export * from "./VideoEffectsSdkReactNativeModule.types";
 export { TsvbVideoEffects };
-export { NativeModule as VideoEffectsSdkReactNativeModule };
+export { VideoEffectsNativeModule as VideoEffectsSdkReactNativeModule };
