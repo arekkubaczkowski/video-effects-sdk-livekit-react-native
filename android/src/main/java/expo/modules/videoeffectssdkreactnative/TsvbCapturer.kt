@@ -205,8 +205,8 @@ class TsvbCapturer(
     override fun stopCapture() {
         Log.d(TAG, "stopCapture")
         isPipelineActive = false
+        manager.onCapturerStopped()
         stopFallbackCapturer()
-        // Do NOT stop/release pipeline — it stays running. Only frame delivery is paused via isPipelineActive flag.
     }
 
     override fun changeCaptureFormat(width: Int, height: Int, fps: Int) {
@@ -218,10 +218,9 @@ class TsvbCapturer(
     override fun dispose() {
         Log.d(TAG, "dispose")
         isPipelineActive = false
+        manager.onCapturerStopped()
         fallbackCapturer?.dispose()
         fallbackCapturer = null
-        // Do NOT release pipeline here — pipeline is owned by TsvbManager and shared across
-        // capturer instances. Only TsvbManager.cleanup() releases it.
         capturerObserver = null
         surfaceTextureHelper = null
         context = null

@@ -302,13 +302,29 @@ class TsvbManager(private val context: Context) {
         }
     }
 
-    /** Release pipeline fully — only called from dispose/cleanup. */
-    fun releasePipeline() {
+    /**
+     * Called when a TsvbCapturer stops or is disposed.
+     * Stops the pipeline (without releasing it) so that the next
+     * startCapture() will call startPipeline() again.
+     *
+     * The pipeline object is kept alive to avoid SIGSEGV from
+     * rapid create/destroy, but the camera is stopped so it's
+     * not running in the background consuming resources.
+     */
+    fun onCapturerStopped() {
         synchronized(lock) {
             if (isPipelineRunning) {
                 cameraPipeline?.stopPipeline()
                 isPipelineRunning = false
+                Log.d(TAG, "Pipeline stopped (capturer stopped/disposed)")
             }
+        }
+    }
+
+    /** Release pipeline fully — only called from dispose/cleanup. */
+    fun releasePipeline() {
+        synchronized(lock) {
+            onCapturerStopped()
             cameraPipeline?.release()
             cameraPipeline = null
             Log.d(TAG, "Pipeline released")
