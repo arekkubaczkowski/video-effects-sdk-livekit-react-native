@@ -303,17 +303,23 @@ class TsvbManager(private val context: Context) {
             } else {
                 optionsCache.pipelineMode
             }
-            Log.i(TAG, "Calling factory.createCameraPipelineAsync(${width}x${height}, camera=$camera, initialMode=$initialMode)")
-            factory.createCameraPipelineAsync(
+            // Lite graph (mobile_gpu_lite.binarypb) runs ONLY the segmentation model
+            // through the TFLite GPU delegate — the full graph also runs color
+            // correction, low-light and smart-zoom models. On Tensor G5 (PowerVR) the
+            // full GPU graph ingests the warm-up frame but never emits output; Lite
+            // strips the secondary GPU model work to isolate whether the casualty is
+            // core segmentation or a secondary calculator.
+            Log.i(TAG, "Calling factory.createLiteCameraPipelineAsync(${width}x${height}, camera=$camera, initialMode=$initialMode)")
+            factory.createLiteCameraPipelineAsync(
                 context,
                 camera = camera,
                 resolution = Size(width, height),
                 mode = initialMode,
             ) { pipeline ->
                 if (pipeline == null) {
-                    Log.e(TAG, "createCameraPipelineAsync returned null pipeline")
+                    Log.e(TAG, "createLiteCameraPipelineAsync returned null pipeline")
                     onReady(null)
-                    return@createCameraPipelineAsync
+                    return@createLiteCameraPipelineAsync
                 }
                 synchronized(lock) {
                     cameraPipeline = pipeline
