@@ -322,7 +322,7 @@ class TsvbManager(private val context: Context) {
                 context,
                 camera = camera,
                 resolution = Size(width, height),
-                mode = initialMode,
+                pipelineMode = initialMode,
             ) { pipeline ->
                 if (pipeline == null) {
                     Log.e(TAG, "createLiteCameraPipelineAsync returned null pipeline")
