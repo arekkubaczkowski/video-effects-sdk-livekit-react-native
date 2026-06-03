@@ -54,6 +54,11 @@ class TsvbCapturer(
         // dispose() joins the watchdog thread (bounded) so no in-flight tick can drive a
         // fallback after the capturer's refs are nulled.
         private const val WATCHDOG_JOIN_TIMEOUT_MS = 1000L
+
+        // DEBUG/TEST ONLY (debug/force-frame-stall branch): drop every pipeline frame so
+        // hasLoggedFirstFrame never sets — forces the silent-stall watchdog→fallback path on a
+        // HEALTHY device, mirroring the Pixel 10 zero-frames stall. Never merge to lite/main.
+        private const val DEBUG_FORCE_FRAME_STALL = true
     }
 
     // capturerObserver is read on the SDK's frame-emit thread (frameListener) and on the
@@ -141,6 +146,10 @@ class TsvbCapturer(
 
     // Frame listener for CameraPipeline output
     private val frameListener = OnFrameAvailableListener { bitmap, timestamp ->
+        // DEBUG/TEST: simulate the zero-frames stall by dropping every frame before it can set
+        // hasLoggedFirstFrame, so the watchdog fires at FIRST_FRAME_WATCHDOG_MS exactly as on the
+        // affected device. Gated by DEBUG_FORCE_FRAME_STALL (debug/force-frame-stall branch only).
+        if (DEBUG_FORCE_FRAME_STALL) return@OnFrameAvailableListener
         if (!isPipelineActive) return@OnFrameAvailableListener
         val observer = capturerObserver ?: return@OnFrameAvailableListener
 
