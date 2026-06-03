@@ -415,9 +415,12 @@ class TsvbCapturer(
      */
     private fun startFallbackCapturer(width: Int, height: Int, fps: Int) {
         try {
+            val observer = capturerObserver
+            val sth = surfaceTextureHelper
+            val ctx = context
             val capturer = enumerator.createCapturer(device, eventsHandler)
-            if (capturer != null && surfaceTextureHelper != null && context != null) {
-                capturer.initialize(surfaceTextureHelper, context, capturerObserver)
+            if (capturer != null && sth != null && ctx != null && observer != null) {
+                capturer.initialize(sth, ctx, FallbackObserver(observer))
                 capturer.startCapture(width, height, fps)
                 fallbackCapturer = capturer
                 Log.w(TAG, "Fallback capturer started — camera works without effects")
@@ -428,6 +431,31 @@ class TsvbCapturer(
         } catch (e: Exception) {
             Log.e(TAG, "Fallback capturer exception", e)
             eventsHandler.onCameraError("Fallback camera failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Wraps the observer so the fallback (standard-camera) path is diagnosable — its frames bypass
+     * frameListener, so this confirms the camera opened (onCapturerStarted) and is actually
+     * producing frames (first frame), distinguishing "fallback works" from "fallback also black".
+     */
+    private inner class FallbackObserver(private val delegate: CapturerObserver) : CapturerObserver {
+        @Volatile
+        private var loggedFrame = false
+
+        override fun onCapturerStarted(success: Boolean) {
+            Log.w(TAG, "Fallback capturer onCapturerStarted: success=$success")
+            delegate.onCapturerStarted(success)
+        }
+
+        override fun onCapturerStopped() = delegate.onCapturerStopped()
+
+        override fun onFrameCaptured(frame: VideoFrame) {
+            if (!loggedFrame) {
+                loggedFrame = true
+                Log.i(TAG, "Fallback first frame: ${frame.buffer.width}x${frame.buffer.height}")
+            }
+            delegate.onFrameCaptured(frame)
         }
     }
 
