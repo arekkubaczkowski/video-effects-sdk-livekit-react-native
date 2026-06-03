@@ -43,6 +43,14 @@ class TsvbManager(private val context: Context) {
     /** Whether the pipeline has been started and is currently running. */
     @Volatile var isPipelineRunning = false
 
+    /**
+     * Invoked once per session when a capturer transitions to the standard-camera fallback,
+     * so the JS module can push an "effects unavailable" event. Set by the Expo module in
+     * OnCreate and kept for the module's lifetime (NOT cleared in cleanup() — re-entry must
+     * still be able to notify).
+     */
+    @Volatile var onEffectsUnavailable: ((reason: String) -> Unit)? = null
+
     private val lock = Any()
     private var cameraPipeline: CameraPipeline? = null
     // Read from the JS bridge thread (isEffectsUnavailable getter) and the WebRTC factory
@@ -412,6 +420,16 @@ class TsvbManager(private val context: Context) {
                 cameraPipeline = null
             }
         }
+    }
+
+    /** Notifies the JS layer that effects fell back to the standard camera this session. */
+    fun notifyEffectsUnavailable(reason: String) {
+        val cb = onEffectsUnavailable
+        if (cb == null) {
+            Log.w(TAG, "notifyEffectsUnavailable: no listener registered (reason=$reason)")
+            return
+        }
+        cb.invoke(reason)
     }
 
     // MARK: - Capturer Registration (via reflection to avoid compile-time dependency on fork)

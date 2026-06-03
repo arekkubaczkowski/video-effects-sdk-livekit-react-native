@@ -6,6 +6,7 @@ import type {
   EffectsConfig,
   EffectsEvent,
   EffectsState,
+  EffectsUnavailableReason,
   FrameCaptureEvent,
   InitializationResult,
   NativeModuleEventsMap,
@@ -28,6 +29,16 @@ class TsvbVideoEffects {
   };
   private _subscribers = new Set<(event: EffectsEvent) => void>();
   private _frameCaptureSubscription: EventSubscription | null = null;
+
+  constructor() {
+    // Registered eagerly at module load (the singleton is constructed once) so the listener is
+    // live before any pipeline can stall, and survives cleanup()→re-init cycles. We intentionally
+    // don't hold/remove the subscription — it lives for the process lifetime and the native
+    // emitter keeps the callback alive. Pushed when the watchdog swaps to the standard camera.
+    VideoEffectsNativeModule.addListener("onEffectsUnavailable", ({ reason }) =>
+      this.handleEffectsUnavailable(reason),
+    );
+  }
 
   async initialize(config: EffectsConfig): Promise<InitializationResult> {
     if (this._state.isEffectsUnavailable) {
@@ -201,6 +212,20 @@ class TsvbVideoEffects {
         "Effects unavailable — camera is running in fallback mode without effects pipeline."
       );
     }
+  }
+
+  /** Bridges the native fallback push into local state + a typed app-facing event. Idempotent. */
+  private handleEffectsUnavailable(reason: EffectsUnavailableReason): void {
+    if (this._state.isEffectsUnavailable) {
+      return;
+    }
+    // updateState auto-emits a stateChange so getState()-based readers (the attach guard, the
+    // poll) react; the explicit emit delivers the typed reason to the app subscriber.
+    this.updateState({
+      isEffectsUnavailable: true,
+      error: `Effects unavailable (${reason})`,
+    });
+    this.emit({ type: "effectsUnavailable", reason });
   }
 
   private updateState(partial: Partial<EffectsState>): void {

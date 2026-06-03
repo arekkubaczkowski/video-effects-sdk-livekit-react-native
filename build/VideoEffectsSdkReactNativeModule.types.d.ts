@@ -32,6 +32,8 @@ export interface FrameCaptureEvent {
     /** Frame height in pixels */
     height: number;
 }
+/** Why effects fell back to the standard camera (mirrors the native fallback reasons). */
+export type EffectsUnavailableReason = "frameTimeout" | "nullPipeline" | "startPipelineThrew";
 export type EffectsEvent = {
     type: "stateChange";
     state: EffectsState;
@@ -42,6 +44,9 @@ export type EffectsEvent = {
 } | {
     type: "frameCaptured";
     frame: FrameCaptureEvent;
+} | {
+    type: "effectsUnavailable";
+    reason: EffectsUnavailableReason;
 };
 export interface InitializationResult {
     success: boolean;
@@ -52,6 +57,9 @@ export interface InitializationResult {
 export type SegmentationPreset = "quality" | "balanced" | "speed" | "lightning";
 export type NativeModuleEventsMap = {
     onFrameCaptured(event: FrameCaptureEvent): void;
+    onEffectsUnavailable(event: {
+        reason: EffectsUnavailableReason;
+    }): void;
 };
 export interface NativeModuleInterface {
     initialize(customerID: string, trackId: string): Promise<InitializationResult>;

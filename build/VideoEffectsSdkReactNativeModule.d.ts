@@ -5,6 +5,7 @@ declare class TsvbVideoEffects {
     private _state;
     private _subscribers;
     private _frameCaptureSubscription;
+    constructor();
     initialize(config: EffectsConfig): Promise<InitializationResult>;
     enableBlur(options?: BlurOptions): Promise<void>;
     enableReplaceBackground(options: ReplaceOptions): Promise<void>;
@@ -26,6 +27,8 @@ declare class TsvbVideoEffects {
     checkEffectsAvailability(): boolean;
     private ensureInitialized;
     private ensureEffectsAvailable;
+    /** Bridges the native fallback push into local state + a typed app-facing event. Idempotent. */
+    private handleEffectsUnavailable;
     private updateState;
     private emitError;
     private emit;

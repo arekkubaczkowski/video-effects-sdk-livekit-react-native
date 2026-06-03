@@ -10,6 +10,13 @@ class TsvbVideoEffects {
     };
     _subscribers = new Set();
     _frameCaptureSubscription = null;
+    constructor() {
+        // Registered eagerly at module load (the singleton is constructed once) so the listener is
+        // live before any pipeline can stall, and survives cleanup()→re-init cycles. We intentionally
+        // don't hold/remove the subscription — it lives for the process lifetime and the native
+        // emitter keeps the callback alive. Pushed when the watchdog swaps to the standard camera.
+        VideoEffectsNativeModule.addListener("onEffectsUnavailable", ({ reason }) => this.handleEffectsUnavailable(reason));
+    }
     async initialize(config) {
         if (this._state.isEffectsUnavailable) {
             throw new Error(this._state.error ?? "Effects SDK unavailable");
@@ -122,8 +129,10 @@ class TsvbVideoEffects {
         try {
             VideoEffectsNativeModule.cleanup();
         }
-        catch {
-            // Ignore cleanup errors
+        catch (error) {
+            // Surface to subscribers but don't throw — cleanup must always complete.
+            const msg = error instanceof Error ? error.message : String(error);
+            this.emitError(`TSVB native cleanup failed: ${msg}`, true);
         }
         this._state = {
             isInitialized: false,
@@ -157,6 +166,19 @@ class TsvbVideoEffects {
         if (this.checkEffectsAvailability()) {
             throw new Error("Effects unavailable — camera is running in fallback mode without effects pipeline.");
         }
+    }
+    /** Bridges the native fallback push into local state + a typed app-facing event. Idempotent. */
+    handleEffectsUnavailable(reason) {
+        if (this._state.isEffectsUnavailable) {
+            return;
+        }
+        // updateState auto-emits a stateChange so getState()-based readers (the attach guard, the
+        // poll) react; the explicit emit delivers the typed reason to the app subscriber.
+        this.updateState({
+            isEffectsUnavailable: true,
+            error: `Effects unavailable (${reason})`,
+        });
+        this.emit({ type: "effectsUnavailable", reason });
     }
     updateState(partial) {
         this._state = { ...this._state, ...partial };

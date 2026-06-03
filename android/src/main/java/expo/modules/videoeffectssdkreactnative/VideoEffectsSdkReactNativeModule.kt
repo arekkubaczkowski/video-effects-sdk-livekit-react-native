@@ -1,6 +1,9 @@
 package expo.modules.videoeffectssdkreactnative
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.Promise
@@ -11,15 +14,33 @@ class VideoEffectsSdkReactNativeModule : Module() {
         TsvbManager(context)
     }
 
+    // Reused for marshalling native→JS event emits onto the main looper.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private val context: Context
         get() = appContext.reactContext ?: throw IllegalStateException("React context not available")
 
     override fun definition() = ModuleDefinition {
         Name("VideoEffectsSdkReactNativeModule")
 
-        Events("onFrameCaptured")
+        Events("onFrameCaptured", "onEffectsUnavailable")
 
         AsyncFunction("initialize") { customerID: String, trackId: String, promise: Promise ->
+            // Bridge the native fallback signal to JS. Set here (not in OnCreate) because the
+            // assignment touches tsvbManager → reactContext, which can be null in OnCreate on
+            // the new architecture. initialize() always runs before any pipeline is created, so
+            // the listener is live well before a stall can occur. Marshalled to the main looper
+            // (fires from the watchdog / SDK threads); wrapped so a torn-down module degrades to
+            // a warning instead of crashing.
+            tsvbManager.onEffectsUnavailable = { reason ->
+                mainHandler.post {
+                    try {
+                        sendEvent("onEffectsUnavailable", mapOf("reason" to reason))
+                    } catch (e: Throwable) {
+                        Log.w("VideoEffectsModule", "onEffectsUnavailable emit failed", e)
+                    }
+                }
+            }
             tsvbManager.initialize(customerID, trackId) { result ->
                 promise.resolve(result)
             }
