@@ -42,8 +42,13 @@ class TsvbCapturer(
     companion object {
         private const val TAG = "TsvbCapturer"
 
-        // No first frame within this window = silent stall → fall back. Under the JS 8s guard.
-        private const val FIRST_FRAME_WATCHDOG_MS = 3000L
+        // If onPipelineReady never fires within this window, the create call hung
+        // (createLiteCameraPipelineAsync stuck in GPU/MediaPipe init) → fall back.
+        private const val CREATION_WATCHDOG_MS = 4000L
+
+        // If the pipeline was created but no first frame arrives within this window → fall back.
+        // Under the JS 8s camera guard.
+        private const val FIRST_FRAME_WATCHDOG_MS = 6000L
 
         // Sampling cadence across the window above.
         private const val WATCHDOG_CHECK_INTERVAL_MS = 500L
@@ -101,6 +106,12 @@ class TsvbCapturer(
     private var watchdogHandler: Handler? = null
     @Volatile
     private var watchdogArmedAtMs = 0L
+    @Volatile
+    private var watchdogActive = false
+    // True once onPipelineReady fires (create callback returned). Still false at
+    // CREATION_WATCHDOG_MS = the create call hung.
+    @Volatile
+    private var pipelineReady = false
 
     // At-most-once latch for the effects→standard-camera transition.
     private val fallbackTriggered = AtomicBoolean(false)
@@ -243,6 +254,8 @@ class TsvbCapturer(
 
         Log.d(TAG, "startCapture: ${width}x${height}@${fps}fps, device=$device")
 
+        pipelineReady = false
+
         // No GL-thread marshalling — TSVB SDK 2.14+ `createCameraPipelineAsync` runs
         // GL/Camera2 init on the SDK's own dedicated thread (its own EGL context current).
         // Our previous workaround posted onto WebRTC's `SurfaceTextureHelper.handler`,
@@ -253,6 +266,10 @@ class TsvbCapturer(
         manager.getOrCreatePipelineAsync(width, height, device) { pipeline ->
             onPipelineReady(pipeline, width, height, fps)
         }
+
+        // Armed here (not in onPipelineReady) so it also covers a pipeline-creation hang:
+        // createLiteCameraPipelineAsync can stall in GPU/MediaPipe init and never call back.
+        armFrameWatchdog()
     }
 
     private fun onPipelineReady(pipeline: CameraPipeline?, width: Int, height: Int, fps: Int) {
@@ -262,6 +279,8 @@ class TsvbCapturer(
             Log.w(TAG, "onPipelineReady: capturer disposed before pipeline init — skipping")
             return
         }
+        // The create callback fired — disarm the creation-hang check (frame check still applies).
+        pipelineReady = true
 
         if (pipeline == null) {
             if (isUsingFallback) {
@@ -300,9 +319,6 @@ class TsvbCapturer(
         isPipelineActive = true
         eventsHandler.onCameraOpening(device)
         Log.i(TAG, "onCameraOpening dispatched to LiveKit")
-
-        // Arm the silent-stall detector (no-op on a healthy reattach / when on fallback).
-        armFrameWatchdog()
     }
 
     override fun stopCapture() {
@@ -426,15 +442,17 @@ class TsvbCapturer(
                 watchdogHandler = Handler(watchdogThread!!.looper)
             }
             watchdogHandler?.removeCallbacksAndMessages(null)
+            watchdogActive = true
             watchdogArmedAtMs = System.currentTimeMillis()
             watchdogHandler?.postDelayed({ frameWatchdogTick() }, WATCHDOG_CHECK_INTERVAL_MS)
-            Log.d(TAG, "Frame watchdog armed — sampling every ${WATCHDOG_CHECK_INTERVAL_MS}ms up to ${FIRST_FRAME_WATCHDOG_MS}ms")
+            Log.d(TAG, "Frame watchdog armed — sampling every ${WATCHDOG_CHECK_INTERVAL_MS}ms (create ${CREATION_WATCHDOG_MS}ms / frame ${FIRST_FRAME_WATCHDOG_MS}ms)")
         }
     }
 
     /** Cancels a pending watchdog, keeps the thread. */
     private fun cancelFrameWatchdog() {
         synchronized(this) {
+            watchdogActive = false
             watchdogHandler?.removeCallbacksAndMessages(null)
         }
     }
@@ -445,6 +463,7 @@ class TsvbCapturer(
      */
     private fun quitFrameWatchdog(joinThread: Boolean) {
         val thread = synchronized(this) {
+            watchdogActive = false
             watchdogHandler?.removeCallbacksAndMessages(null)
             val t = watchdogThread
             watchdogThread = null
@@ -461,21 +480,28 @@ class TsvbCapturer(
         }
     }
 
-    /** Samples each tick; falls back once FIRST_FRAME_WATCHDOG_MS elapses with zero frames. */
+    /**
+     * Samples each tick: falls back if the create callback never fires (CREATION_WATCHDOG_MS) or
+     * if it fires but no first frame arrives (FIRST_FRAME_WATCHDOG_MS).
+     */
     private fun frameWatchdogTick() {
-        if (hasLoggedFirstFrame || isUsingFallback || capturerObserver == null) {
+        if (!watchdogActive || hasLoggedFirstFrame || isUsingFallback || capturerObserver == null) {
             return
         }
         val elapsed = System.currentTimeMillis() - watchdogArmedAtMs
-        if (elapsed >= FIRST_FRAME_WATCHDOG_MS) {
-            Log.e(TAG, "Frame watchdog: still 0 frames after ${elapsed}ms — pipeline stalled, falling back")
+        if (!pipelineReady && elapsed >= CREATION_WATCHDOG_MS) {
+            Log.e(TAG, "Frame watchdog: no pipeline after ${elapsed}ms — creation stalled, falling back")
             triggerEffectsFallback("frameTimeout", currentWidth, currentHeight, currentFps)
             return
         }
-        Log.d(TAG, "Frame watchdog: 0 frames at ${elapsed}ms — re-checking in ${WATCHDOG_CHECK_INTERVAL_MS}ms")
+        if (elapsed >= FIRST_FRAME_WATCHDOG_MS) {
+            Log.e(TAG, "Frame watchdog: no first frame after ${elapsed}ms — pipeline stalled, falling back")
+            triggerEffectsFallback("frameTimeout", currentWidth, currentHeight, currentFps)
+            return
+        }
+        Log.d(TAG, "Frame watchdog: no frame at ${elapsed}ms (ready=$pipelineReady) — re-checking in ${WATCHDOG_CHECK_INTERVAL_MS}ms")
         synchronized(this) {
-            // Reschedule only if nothing disarmed us in the meantime.
-            if (watchdogHandler != null && !hasLoggedFirstFrame && !isUsingFallback && capturerObserver != null) {
+            if (watchdogActive && watchdogHandler != null && !hasLoggedFirstFrame && !isUsingFallback && capturerObserver != null) {
                 watchdogHandler?.postDelayed({ frameWatchdogTick() }, WATCHDOG_CHECK_INTERVAL_MS)
             }
         }
@@ -491,6 +517,7 @@ class TsvbCapturer(
             // Check + claim latch + close the gate atomically so a boundary first frame blocks the swap.
             if (hasLoggedFirstFrame || capturerObserver == null) return
             if (!fallbackTriggered.compareAndSet(false, true)) return
+            watchdogActive = false
             isPipelineActive = false
             isUsingFallback = true
         }
