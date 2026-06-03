@@ -11,10 +11,8 @@ class TsvbVideoEffects {
     _subscribers = new Set();
     _frameCaptureSubscription = null;
     constructor() {
-        // Registered eagerly at module load (the singleton is constructed once) so the listener is
-        // live before any pipeline can stall, and survives cleanup()→re-init cycles. We intentionally
-        // don't hold/remove the subscription — it lives for the process lifetime and the native
-        // emitter keeps the callback alive. Pushed when the watchdog swaps to the standard camera.
+        // Eager at module load so the listener is live before any stall and survives cleanup()→re-init.
+        // Not stored — it lives for the process lifetime and the native emitter holds the callback.
         VideoEffectsNativeModule.addListener("onEffectsUnavailable", ({ reason }) => this.handleEffectsUnavailable(reason));
     }
     async initialize(config) {
@@ -172,8 +170,7 @@ class TsvbVideoEffects {
         if (this._state.isEffectsUnavailable) {
             return;
         }
-        // updateState auto-emits a stateChange so getState()-based readers (the attach guard, the
-        // poll) react; the explicit emit delivers the typed reason to the app subscriber.
+        // updateState auto-emits stateChange for getState() readers; emit delivers the typed reason.
         this.updateState({
             isEffectsUnavailable: true,
             error: `Effects unavailable (${reason})`,

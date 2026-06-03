@@ -42,17 +42,13 @@ class TsvbCapturer(
     companion object {
         private const val TAG = "TsvbCapturer"
 
-        // If the effects pipeline reports "started" but never emits a first frame within
-        // this window, we treat it as the deterministic PowerVR / Tensor-G5 silent stall and
-        // swap to the standard camera. Tunable; kept well under the JS-side 8s camera guard.
+        // No first frame within this window = silent stall → fall back. Under the JS 8s guard.
         private const val FIRST_FRAME_WATCHDOG_MS = 3000L
 
-        // The watchdog samples frame arrival at this cadence across the window above, so the
-        // "0 frames" verdict is confirmed by repeated checks rather than a single timer.
+        // Sampling cadence across the window above.
         private const val WATCHDOG_CHECK_INTERVAL_MS = 500L
 
-        // dispose() joins the watchdog thread (bounded) so no in-flight tick can drive a
-        // fallback after the capturer's refs are nulled.
+        // Bounded join in dispose() so no in-flight tick runs after teardown.
         private const val WATCHDOG_JOIN_TIMEOUT_MS = 1000L
     }
 
@@ -61,9 +57,7 @@ class TsvbCapturer(
     // cross-thread visibility and lets us check for "capturer disposed" inside the callback.
     @Volatile
     private var capturerObserver: CapturerObserver? = null
-    // Read on the watchdog HandlerThread (via startFallbackCapturer) and the SDK init thread;
-    // written on the WebRTC init thread — @Volatile gives the cross-thread happens-before so
-    // the watchdog can't read a stale null and send the fallback into onCameraError.
+    // @Volatile: read on the watchdog thread, written on the WebRTC init thread.
     @Volatile
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     @Volatile
@@ -100,9 +94,7 @@ class TsvbCapturer(
     @Volatile
     private var hasLoggedFirstFrame = false
 
-    // Frame-arrival watchdog: armed when the pipeline reports ready, cancelled on the first
-    // frame. If it fires, the pipeline stalled silently (no frames, no exception) and we swap
-    // to the standard camera. Runs on its own HandlerThread; transitions under synchronized(this).
+    // Frame-arrival watchdog on its own HandlerThread; transitions under synchronized(this).
     @Volatile
     private var watchdogThread: HandlerThread? = null
     @Volatile
@@ -110,8 +102,7 @@ class TsvbCapturer(
     @Volatile
     private var watchdogArmedAtMs = 0L
 
-    // At-most-once-per-session latch for the effects→standard-camera transition (teardown +
-    // JS notification). The standard-camera (re)start itself is restart-safe and not gated by this.
+    // At-most-once latch for the effects→standard-camera transition.
     private val fallbackTriggered = AtomicBoolean(false)
 
     // Frame capture
@@ -145,8 +136,7 @@ class TsvbCapturer(
         val observer = capturerObserver ?: return@OnFrameAvailableListener
 
         if (!hasLoggedFirstFrame) {
-            // Set the flag under the same monitor triggerEffectsFallback uses, so a first frame
-            // landing at the timeout boundary deterministically beats the watchdog.
+            // Set under the same monitor as triggerEffectsFallback so a boundary first frame beats it.
             val isFirst = synchronized(this) {
                 if (hasLoggedFirstFrame) {
                     false
@@ -275,8 +265,7 @@ class TsvbCapturer(
 
         if (pipeline == null) {
             if (isUsingFallback) {
-                // Already fell back this session; a stop/start cycle just needs the standard
-                // camera brought back up (it was disposed in stopCapture).
+                // Already on fallback — a stop/start cycle just restarts the standard camera.
                 Log.d(TAG, "onPipelineReady: null pipeline while already on fallback — restarting standard camera")
                 startFallbackCapturer(width, height, fps)
             } else {
@@ -303,8 +292,7 @@ class TsvbCapturer(
         } else {
             Log.d(TAG, "Pipeline already running, reattached listener")
         }
-        // A concurrent watchdog/teardown may have latched the fallback while this callback was
-        // in flight — never resurrect a released pipeline.
+        // A concurrent teardown may have latched fallback — don't resurrect a released pipeline.
         if (isUsingFallback) {
             Log.w(TAG, "onPipelineReady: fallback already latched — skipping activation")
             return
@@ -313,14 +301,13 @@ class TsvbCapturer(
         eventsHandler.onCameraOpening(device)
         Log.i(TAG, "onCameraOpening dispatched to LiveKit")
 
-        // Arm the silent-stall detector. No-ops on a healthy reattach (this instance already
-        // logged a first frame) and when already on fallback.
+        // Arm the silent-stall detector (no-op on a healthy reattach / when on fallback).
         armFrameWatchdog()
     }
 
     override fun stopCapture() {
         Log.d(TAG, "stopCapture")
-        // A deliberate stop is not a stall — drop any pending watchdog before frames stop.
+        // A deliberate stop is not a stall.
         cancelFrameWatchdog()
         isPipelineActive = false
         manager.onCapturerStopped()
@@ -430,11 +417,7 @@ class TsvbCapturer(
 
     // MARK: - Frame watchdog
 
-    /**
-     * Arms the first-frame watchdog at the end of a successful onPipelineReady. No-op if a
-     * frame already arrived on this instance, if we're already on fallback, or if the capturer
-     * was disposed. Lazily spins up the dedicated HandlerThread.
-     */
+    /** Arms the first-frame watchdog; no-op once a frame arrived / on fallback / disposed. */
     private fun armFrameWatchdog() {
         synchronized(this) {
             if (hasLoggedFirstFrame || isUsingFallback || capturerObserver == null) return
@@ -449,7 +432,7 @@ class TsvbCapturer(
         }
     }
 
-    /** Cancels a pending watchdog without tearing down the thread (first frame / deliberate stop). */
+    /** Cancels a pending watchdog, keeps the thread. */
     private fun cancelFrameWatchdog() {
         synchronized(this) {
             watchdogHandler?.removeCallbacksAndMessages(null)
@@ -457,10 +440,8 @@ class TsvbCapturer(
     }
 
     /**
-     * Cancels the watchdog and reclaims its thread. When [joinThread] is true (dispose path),
-     * waits (bounded) for any in-flight tick to finish so no fallback can run after the
-     * capturer's refs are nulled. Joins OUTSIDE the monitor so a tick blocked on
-     * synchronized(this) can still complete.
+     * Cancels the watchdog and reclaims its thread. joinThread (dispose) waits out any in-flight
+     * tick; joins outside the monitor so a tick blocked on synchronized(this) can finish.
      */
     private fun quitFrameWatchdog(joinThread: Boolean) {
         val thread = synchronized(this) {
@@ -480,14 +461,9 @@ class TsvbCapturer(
         }
     }
 
-    /**
-     * Runs every [WATCHDOG_CHECK_INTERVAL_MS] on the watchdog looper. Disarms the moment a
-     * frame has arrived; once the full [FIRST_FRAME_WATCHDOG_MS] window has elapsed with still
-     * zero frames, it concludes the pipeline silently stalled and triggers the fallback.
-     */
+    /** Samples each tick; falls back once FIRST_FRAME_WATCHDOG_MS elapses with zero frames. */
     private fun frameWatchdogTick() {
         if (hasLoggedFirstFrame || isUsingFallback || capturerObserver == null) {
-            // A frame arrived, we already fell back, or the capturer is gone — stop sampling.
             return
         }
         val elapsed = System.currentTimeMillis() - watchdogArmedAtMs
@@ -506,26 +482,20 @@ class TsvbCapturer(
     }
 
     /**
-     * One-time transition from the effects pipeline to the standard camera: closes the frame
-     * gate, releases the stalled pipeline, brings up the standard capturer, and pushes the
-     * native→JS "effects unavailable" event. Idempotent per capturer instance via
-     * [fallbackTriggered]; the standard-camera (re)start on later stop/start cycles is handled
-     * by the onPipelineReady null-path, not here.
+     * One-time effects→standard-camera transition (idempotent via fallbackTriggered): gate off,
+     * release pipeline, start standard camera, notify JS. Re-start on later stop/start cycles is
+     * handled by the onPipelineReady null-path.
      */
     private fun triggerEffectsFallback(reason: String, width: Int, height: Int, fps: Int) {
         synchronized(this) {
-            // First frame won the race (its flag is set under this same monitor), or the
-            // capturer is gone — nothing to fall back from. Check + claim the latch + close the
-            // frame gate ATOMICALLY so a first frame arriving at the timeout boundary
-            // deterministically blocks the swap (no slow-but-healthy device downgrade).
+            // Check + claim latch + close the gate atomically so a boundary first frame blocks the swap.
             if (hasLoggedFirstFrame || capturerObserver == null) return
             if (!fallbackTriggered.compareAndSet(false, true)) return
             isPipelineActive = false
             isUsingFallback = true
         }
         Log.e(TAG, "Effects fallback ($reason) — switching to standard camera")
-        // SDK + camera work runs OUTSIDE the monitor — releasePipeline takes the manager lock
-        // and must not nest under 'this' (preserves the no-SDK-calls-under-a-lock discipline).
+        // SDK/camera work outside the monitor (releasePipeline takes the manager lock; don't nest).
         manager.releasePipeline()
         startFallbackCapturer(width, height, fps)
         manager.notifyEffectsUnavailable(reason)

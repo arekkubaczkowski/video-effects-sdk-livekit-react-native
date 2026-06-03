@@ -43,12 +43,7 @@ class TsvbManager(private val context: Context) {
     /** Whether the pipeline has been started and is currently running. */
     @Volatile var isPipelineRunning = false
 
-    /**
-     * Invoked once per session when a capturer transitions to the standard-camera fallback,
-     * so the JS module can push an "effects unavailable" event. Set by the Expo module in
-     * OnCreate and kept for the module's lifetime (NOT cleared in cleanup() — re-entry must
-     * still be able to notify).
-     */
+    /** Fallback push to JS. Set by the module; kept for its lifetime (not cleared in cleanup). */
     @Volatile var onEffectsUnavailable: ((reason: String) -> Unit)? = null
 
     private val lock = Any()

@@ -26,12 +26,9 @@ class VideoEffectsSdkReactNativeModule : Module() {
         Events("onFrameCaptured", "onEffectsUnavailable")
 
         AsyncFunction("initialize") { customerID: String, trackId: String, promise: Promise ->
-            // Bridge the native fallback signal to JS. Set here (not in OnCreate) because the
-            // assignment touches tsvbManager → reactContext, which can be null in OnCreate on
-            // the new architecture. initialize() always runs before any pipeline is created, so
-            // the listener is live well before a stall can occur. Marshalled to the main looper
-            // (fires from the watchdog / SDK threads); wrapped so a torn-down module degrades to
-            // a warning instead of crashing.
+            // Bridge the native fallback to JS. Set in initialize() (not OnCreate, where
+            // reactContext can be null on the new arch); runs before any pipeline. Marshalled to
+            // the main looper and wrapped so a torn-down module degrades to a warning.
             tsvbManager.onEffectsUnavailable = { reason ->
                 mainHandler.post {
                     try {
