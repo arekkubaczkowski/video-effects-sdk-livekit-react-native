@@ -294,6 +294,15 @@ class TsvbCapturer(
             return
         }
 
+        // Latch check BEFORE wiring/starting: the watchdog may have fallen back while the async
+        // create hung. A late pipeline must never start — its camera session would evict the
+        // fallback capturer's camera (black screen again). Release it instead.
+        if (isUsingFallback) {
+            Log.w(TAG, "onPipelineReady: fallback already latched — releasing late pipeline")
+            manager.releasePipeline()
+            return
+        }
+
         pipeline.setOnFrameAvailableListener(frameListener)
         // Only call startPipeline on first creation — pipeline stays running across stop/start
         if (!manager.isPipelineRunning) {
@@ -311,9 +320,13 @@ class TsvbCapturer(
         } else {
             Log.d(TAG, "Pipeline already running, reattached listener")
         }
-        // A concurrent teardown may have latched fallback — don't resurrect a released pipeline.
+        // Latch may flip mid-start (frame watchdog keeps running after pipelineReady) — release
+        // rather than leave a started pipeline holding the camera against the fallback.
+        // releasePipeline() is null-safe, so racing the watchdog's own release is harmless.
         if (isUsingFallback) {
-            Log.w(TAG, "onPipelineReady: fallback already latched — skipping activation")
+            Log.w(TAG, "onPipelineReady: fallback latched mid-start — releasing late pipeline")
+            pipeline.setOnFrameAvailableListener(null)
+            manager.releasePipeline()
             return
         }
         isPipelineActive = true
